@@ -77,7 +77,7 @@ jobs:
           setsid env \
             VITE_FRONTEND_PORT="$STAGING_FRONTEND_PORT" \
             VITE_BACKEND_PROXY_TARGET="$API_BASE_URL" \
-            npm --prefix app/frontend run preview -- --host 127.0.0.1 >"$frontend_log" 2>&1 &
+            npm --prefix app/frontend run preview -- --host 127.0.0.1 --port "$STAGING_FRONTEND_PORT" --strictPort >"$frontend_log" 2>&1 &
           frontend_pid=$!
 
           cleanup() {
