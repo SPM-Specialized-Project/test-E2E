@@ -36,10 +36,15 @@ test.describe('SPM staging smoke', () => {
     await page.goto('/login');
     await page.locator('#email').fill(testAccounts.student.email);
     await page.locator('#password').fill('wrong-password');
+
+    const loginResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes('/api/auth/login') && response.request().method() === 'POST',
+    );
     await page.getByRole('button', { name: 'Đăng nhập' }).click();
 
+    expect((await loginResponse).status()).toBe(401);
     await expect(page).toHaveURL(/\/login\/?$/);
-    await expect(page.getByText('sai tên người dùng', { exact: true })).toBeVisible();
-    await expect(page.getByText('sai mật khẩu', { exact: true })).toBeVisible();
+    await expect(page.getByText('Email hoặc mật khẩu không đúng!', { exact: true })).toBeVisible();
   });
 });
