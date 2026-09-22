@@ -1,8 +1,14 @@
 name: Run SPM E2E
 
-run-name: SPM E2E ${{ github.event.client_payload.correlation_id }}
+run-name: SPM E2E ${{ github.event.client_payload.correlation_id || 'manual' }}
 
 on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Public staging URL to test, for example https://example.trycloudflare.com
+        required: true
+        type: string
   repository_dispatch:
     types:
       - spm-staging-e2e
@@ -11,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: test-e2e-local
+  group: test-e2e-${{ github.event.client_payload.check_kind || 'legacy' }}
   cancel-in-progress: false
 
 jobs:
@@ -20,10 +26,6 @@ jobs:
     runs-on: [self-hosted, linux, x64, test-e2e-local]
     timeout-minutes: 30
     env:
-      BASE_URL: http://127.0.0.1:3010
-      API_BASE_URL: http://127.0.0.1:4010
-      STAGING_FRONTEND_PORT: 3010
-      STAGING_BACKEND_PORT: 4010
       CI: true
     steps:
       - name: Checkout E2E tests
@@ -31,79 +33,39 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Checkout SPM application under test
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.event.client_payload.app_repository }}
-          ref: ${{ github.event.client_payload.app_sha }}
-          path: app
-          token: ${{ secrets.SPM_CHECKOUT_TOKEN || github.token }}
-          fetch-depth: 1
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - name: Install application dependencies
-        run: npm ci
-        working-directory: app/frontend
-
-      - name: Build application frontend
-        run: npm run build
-        working-directory: app/frontend
 
       - name: Install E2E dependencies and browser
         run: |
           npm ci
           npx playwright install chromium
 
-      - name: Start isolated SPM application
+      - name: Verify target staging URL
         shell: bash
+        env:
+          TARGET_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.base_url || github.event.client_payload.base_url }}
         run: |
           set -euo pipefail
 
-          data_dir="$RUNNER_TEMP/spm-e2e-data-$GITHUB_RUN_ID"
-          backend_log="$RUNNER_TEMP/spm-backend-$GITHUB_RUN_ID.log"
-          frontend_log="$RUNNER_TEMP/spm-frontend-$GITHUB_RUN_ID.log"
-          mkdir -p "$data_dir"
+          if [[ -z "${TARGET_BASE_URL:-}" ]]; then
+            echo '::error::A staging URL is required.'
+            exit 1
+          fi
 
-          setsid env \
-            BACKEND_PORT="$STAGING_BACKEND_PORT" \
-            BACKEND_DATA_DIRECTORY="$data_dir" \
-            npm --prefix app/backend run start >"$backend_log" 2>&1 &
-          backend_pid=$!
+          base_url="${TARGET_BASE_URL%/}"
+          curl --fail --silent --show-error --retry 10 --retry-delay 2 \
+            "$base_url/api/health" >/dev/null
+          curl --fail --silent --show-error --retry 10 --retry-delay 2 \
+            "$base_url/login" >/dev/null
 
-          setsid env \
-            VITE_FRONTEND_PORT="$STAGING_FRONTEND_PORT" \
-            VITE_BACKEND_PROXY_TARGET="$API_BASE_URL" \
-            npm --prefix app/frontend run preview -- --host 127.0.0.1 --port "$STAGING_FRONTEND_PORT" --strictPort >"$frontend_log" 2>&1 &
-          frontend_pid=$!
+          echo "BASE_URL=$base_url" >> "$GITHUB_ENV"
+          echo "API_BASE_URL=$base_url" >> "$GITHUB_ENV"
 
-          cleanup() {
-            kill -- -"$frontend_pid" -"$backend_pid" 2>/dev/null || true
-            wait "$frontend_pid" "$backend_pid" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          wait_for_url() {
-            local url="$1"
-            for _ in $(seq 1 60); do
-              if curl --fail --silent --show-error "$url" >/dev/null; then
-                return 0
-              fi
-              sleep 1
-            done
-
-            echo "Timed out waiting for $url"
-            cat "$backend_log" || true
-            cat "$frontend_log" || true
-            return 1
-          }
-
-          wait_for_url "$API_BASE_URL/api/health"
-          wait_for_url "$BASE_URL/login"
-          npm test
+      - name: Run Playwright E2E
+        run: npm test
 
       - name: Upload E2E artifacts
         if: always()
@@ -114,5 +76,3 @@ jobs:
           path: |
             playwright-report
             test-results
-            ${{ runner.temp }}/spm-backend-${{ github.run_id }}.log
-            ${{ runner.temp }}/spm-frontend-${{ github.run_id }}.log
