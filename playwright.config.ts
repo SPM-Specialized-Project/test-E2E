@@ -15,6 +15,20 @@ export default defineConfig({
   reporter: process.env.CI
     ? [['line'], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
     : 'list',
+  webServer: [
+    {
+      command: 'cd ../spm && npm run backend',
+      url: 'http://127.0.0.1:4000/api/health',
+      reuseExistingServer: true,
+      timeout: 120000,
+    },
+    {
+      command: 'cd ../spm/frontend && npm run dev -- --host 127.0.0.1 --strictPort',
+      url: 'http://127.0.0.1:3000',
+      reuseExistingServer: true,
+      timeout: 180000,
+    },
+  ],
   use: {
     baseURL,
     trace: 'retain-on-failure',
