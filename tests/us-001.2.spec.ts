@@ -87,4 +87,15 @@ test.describe('US-001.2 authorization boundary tests', () => {
     });
     expect(blockedClassroomResponse.status()).toBe(403);
   });
+
+  test('invalid login credentials display inline errors and keep the user on the login page', async ({ page }) => {
+    await page.goto(`${process.env.BASE_URL ?? 'http://127.0.0.1:3000'}/login`);
+    await page.locator('#email').fill('wrong@example.com');
+    await page.locator('#password').fill('wrong-password');
+    await page.getByRole('button', { name: 'Đăng nhập' }).click();
+
+    await expect(page.getByText('sai tên người dùng')).toBeVisible();
+    await expect(page.getByText('sai mật khẩu')).toBeVisible();
+    await expect(page).toHaveURL(/\/login\/?$/);
+  });
 });

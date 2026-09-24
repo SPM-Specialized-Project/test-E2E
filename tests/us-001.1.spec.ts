@@ -187,4 +187,21 @@ test.describe('Authentication and security requirements', () => {
     expect(payload.message).toBe('Email hoặc mật khẩu không đúng!');
     expect(logText.toLowerCase()).not.toContain(secretPassword.toLowerCase());
   });
+
+  test('required email and password are enforced before a login request is sent', async ({ page }) => {
+    const loginRequests: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/api/auth/login')) {
+        loginRequests.push(request.url());
+      }
+    });
+
+    await page.goto(`${appBaseURL}/login`);
+    await page.getByRole('button', { name: 'Đăng nhập' }).click();
+
+    await expect(page).toHaveURL(/\/login\/?$/);
+    await expect.poll(() => page.locator('#email').evaluate((el) => (el as HTMLInputElement).validity.valid)).toBe(false);
+    await expect.poll(() => page.locator('#password').evaluate((el) => (el as HTMLInputElement).validity.valid)).toBe(false);
+    expect(loginRequests).toHaveLength(0);
+  });
 });

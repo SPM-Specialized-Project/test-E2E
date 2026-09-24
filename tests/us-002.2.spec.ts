@@ -161,4 +161,29 @@ test.describe('US-002.2 enrollment and retention integrity', () => {
 
     expect(problemResponse.status()).toBe(403);
   });
+
+  test('filters courses by title and ignores letter casing', async ({ page }) => {
+    await page.goto(`${process.env.BASE_URL ?? 'http://127.0.0.1:3000'}/login`);
+    await page.locator('#email').fill('student@gmail.com');
+    await page.locator('#password').fill('student123');
+    await page.getByRole('button', { name: 'Đăng nhập' }).click();
+    await expect(page).toHaveURL(/\/dashboard\/?$/);
+
+    await page.getByPlaceholder('Nhập tên khóa học để tìm kiếm...').fill('CƠ SỞ');
+
+    await expect(page.getByText('Cơ sở dữ liệu')).toBeVisible();
+    await expect(page.getByText('Lập trình cơ bản')).not.toBeVisible();
+  });
+
+  test('shows the empty state when a course search has no results', async ({ page }) => {
+    await page.goto(`${process.env.BASE_URL ?? 'http://127.0.0.1:3000'}/login`);
+    await page.locator('#email').fill('student@gmail.com');
+    await page.locator('#password').fill('student123');
+    await page.getByRole('button', { name: 'Đăng nhập' }).click();
+    await expect(page).toHaveURL(/\/dashboard\/?$/);
+
+    await page.getByPlaceholder('Nhập tên khóa học để tìm kiếm...').fill('Không tồn tại');
+
+    await expect(page.getByText('Không tìm thấy khóa học với từ khóa "Không tồn tại"')).toBeVisible();
+  });
 });
