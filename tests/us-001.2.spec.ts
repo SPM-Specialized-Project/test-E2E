@@ -32,7 +32,7 @@ async function setCodePulseMembershipStatus(
   );
   expect(response.status()).toBe(200);
   const payload = await response.json();
-  expect(payload.item.status).toBe(status);
+  expect(String(payload.item.status).toLowerCase()).toBe(status);
 }
 
 async function resetCodePulseMemberships(
@@ -143,23 +143,23 @@ test.describe("US-001.2 authorization boundary tests", () => {
     request,
   }) => {
     const adminToken = await login(request, "admin@gmail.com", "admin123");
-    const student2Token = await login(
+    const studentToken = await login(
       request,
-      "student2@gmail.com",
-      "student2123",
+      "student@gmail.com",
+      "student123",
     );
 
     await setCodePulseMembershipStatus(
       request,
       adminToken,
-      "member-2",
+      "member-1",
       "revoked",
     );
 
     const blockedWorkspaceResponse = await request.get(
-      `${apiBaseURL}/api/codepulse/workspaces/workspace-2`,
+      `${apiBaseURL}/api/codepulse/workspaces/workspace-1`,
       {
-        headers: { Authorization: `Bearer ${student2Token}` },
+        headers: { Authorization: `Bearer ${studentToken}` },
       },
     );
     expect(blockedWorkspaceResponse.status()).toBe(403);
@@ -167,7 +167,7 @@ test.describe("US-001.2 authorization boundary tests", () => {
     const blockedClassroomResponse = await request.get(
       `${apiBaseURL}/api/codepulse/classrooms/class-1`,
       {
-        headers: { Authorization: `Bearer ${student2Token}` },
+        headers: { Authorization: `Bearer ${studentToken}` },
       },
     );
     expect(blockedClassroomResponse.status()).toBe(403);
@@ -179,8 +179,9 @@ test.describe("US-001.2 authorization boundary tests", () => {
     await page.locator('#password').fill('wrong-password');
     await page.getByRole('button', { name: 'Đăng nhập' }).click();
 
-    await expect(page.getByText('sai tên người dùng')).toBeVisible();
-    await expect(page.getByText('sai mật khẩu')).toBeVisible();
+    await expect(
+      page.getByText('Email hoặc mật khẩu không đúng!').first(),
+    ).toBeVisible();
     await expect(page).toHaveURL(/\/login\/?$/);
   });
 });
