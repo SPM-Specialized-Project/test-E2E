@@ -253,10 +253,16 @@ test.describe("US-002.2 enrollment and retention integrity", () => {
     await page.getByRole('button', { name: 'Đăng nhập' }).click();
     await expect(page).toHaveURL(/\/dashboard\/?$/);
 
-    await page.getByPlaceholder('Nhập tên khóa học để tìm kiếm...').fill('CƠ SỞ');
+    await page
+      .getByPlaceholder('Nhập tên khóa học để tìm kiếm...')
+      .fill('DATABASE');
 
-    await expect(page.getByText('Cơ sở dữ liệu')).toBeVisible();
-    await expect(page.getByText('Lập trình cơ bản')).not.toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'Database System', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'Computer Network', exact: true }),
+    ).not.toBeVisible();
   });
 
   test('shows the empty state when a course search has no results', async ({ page }) => {
