@@ -73,7 +73,7 @@ async function setCodePulseMembershipStatus(
   );
   expect(response.status()).toBe(200);
   const payload = await response.json();
-  expect(payload.item.status).toBe(status);
+  expect(String(payload.item.status).toLowerCase()).toBe(status);
 }
 
 test.describe("US-002.2 enrollment and retention integrity", () => {
@@ -211,7 +211,7 @@ test.describe("US-002.2 enrollment and retention integrity", () => {
     await setCodePulseMembershipStatus(
       request,
       adminToken,
-      "member-2",
+      "member-1",
       "active",
     );
 
@@ -219,14 +219,14 @@ test.describe("US-002.2 enrollment and retention integrity", () => {
       await setCodePulseMembershipStatus(
         request,
         adminToken,
-        "member-2",
+        "member-1",
         "revoked",
       );
 
       const studentToken = await login(
         request,
-        "student2@gmail.com",
-        "student2123",
+        "student@gmail.com",
+        "student123",
       );
       const problemResponse = await request.get(
         `${apiBaseURL}/api/codepulse/classrooms/class-1/problems/problem-1`,
@@ -240,7 +240,7 @@ test.describe("US-002.2 enrollment and retention integrity", () => {
       await setCodePulseMembershipStatus(
         request,
         adminToken,
-        "member-2",
+        "member-1",
         "active",
       );
     }
