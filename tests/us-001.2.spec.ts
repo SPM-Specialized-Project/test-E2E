@@ -1,8 +1,12 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from "@playwright/test";
 
 import { apiBaseURL, appBaseURL, isRemoteHost, remoteWritesAllowed } from './fixtures/target-host';
 
-async function login(request: Parameters<typeof test>[0]['request'], email: string, password: string) {
+async function login(
+  request: Parameters<typeof test>[0]["request"],
+  email: string,
+  password: string,
+) {
   const response = await request.post(`${apiBaseURL}/api/auth/login`, {
     data: { email, password },
   });
@@ -13,26 +17,73 @@ async function login(request: Parameters<typeof test>[0]['request'], email: stri
   return payload.accessToken as string;
 }
 
-test.describe('US-001.2 authorization boundary tests', () => {
-  test('student cannot access lecturer dashboard and receives sanitized test-case data', async ({ request }) => {
-    const studentToken = await login(request, 'student@gmail.com', 'student123');
+async function setCodePulseMembershipStatus(
+  request: Parameters<typeof test>[0]["request"],
+  adminToken: string,
+  membershipId: string,
+  status: "active" | "revoked",
+) {
+  const response = await request.patch(
+    `${apiBaseURL}/api/codepulse/memberships/${membershipId}`,
+    {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      data: { status },
+    },
+  );
+  expect(response.status()).toBe(200);
+  const payload = await response.json();
+  expect(String(payload.item.status).toLowerCase()).toBe(status);
+}
 
-    const dashboardResponse = await request.get(`${apiBaseURL}/api/codepulse/classrooms/class-1/dashboard`, {
-      headers: { Authorization: `Bearer ${studentToken}` },
-    });
+async function resetCodePulseMemberships(
+  request: Parameters<typeof test>[0]["request"],
+) {
+  const adminToken = await login(request, "admin@gmail.com", "admin123");
+  await setCodePulseMembershipStatus(request, adminToken, "member-1", "active");
+  await setCodePulseMembershipStatus(request, adminToken, "member-2", "active");
+}
+
+test.describe("US-001.2 authorization boundary tests", () => {
+  test.beforeEach(async ({ request }) => {
+    await resetCodePulseMemberships(request);
+  });
+
+  test.afterEach(async ({ request }) => {
+    await resetCodePulseMemberships(request);
+  });
+
+  test("student cannot access lecturer dashboard and receives sanitized test-case data", async ({
+    request,
+  }) => {
+    const studentToken = await login(
+      request,
+      "student@gmail.com",
+      "student123",
+    );
+
+    const dashboardResponse = await request.get(
+      `${apiBaseURL}/api/codepulse/classrooms/class-1/dashboard`,
+      {
+        headers: { Authorization: `Bearer ${studentToken}` },
+      },
+    );
     expect(dashboardResponse.status()).toBe(403);
 
-    const problemResponse = await request.get(`${apiBaseURL}/api/codepulse/classrooms/class-1/problems/problem-1`, {
-      headers: { Authorization: `Bearer ${studentToken}` },
-    });
-    expect(problemResponse.status()).toBe(200);
-
+    const problemResponse = await request.get(
+      `${apiBaseURL}/api/codepulse/classrooms/class-1/problems/problem-1`,
+      {
+        headers: { Authorization: `Bearer ${studentToken}` },
+      },
+    );
     const payload = await problemResponse.json();
+    expect(problemResponse.status()).toBe(200);
     expect(payload.item.testCases).toHaveLength(1);
-    expect(payload.item.testCases[0].id).toBe('public-1');
-    expect(payload.item.testCases.every((testCase) => !testCase.hidden)).toBeTruthy();
+    expect(payload.item.testCases[0].id).toBe("public-1");
+    expect(
+      payload.item.testCases.every((testCase) => !testCase.hidden),
+    ).toBeTruthy();
     expect(payload.item.rawRunnerTrace).toBeUndefined();
-    expect(JSON.stringify(payload)).not.toContain('secret input');
+    expect(JSON.stringify(payload)).not.toContain("secret input");
   });
 
   test('lecturer cannot edit another student workspace through the API', async ({ request }) => {
@@ -44,7 +95,7 @@ test.describe('US-001.2 authorization boundary tests', () => {
       data: {
         sourceCode: 'print("hacked")',
       },
-    });
+    );
 
     expect(response.status()).toBe(403);
   });
@@ -58,13 +109,16 @@ test.describe('US-001.2 authorization boundary tests', () => {
     });
     expect(foreignWorkspaceResponse.status()).toBe(403);
 
-    const privilegeEscalationResponse = await request.patch(`${apiBaseURL}/api/codepulse/workspaces/workspace-2`, {
-      headers: { Authorization: `Bearer ${studentToken}` },
-      data: {
-        sourceCode: 'print("admin")',
-        is_admin: true,
+    const privilegeEscalationResponse = await request.patch(
+      `${apiBaseURL}/api/codepulse/workspaces/workspace-2`,
+      {
+        headers: { Authorization: `Bearer ${studentToken}` },
+        data: {
+          sourceCode: 'print("admin")',
+          is_admin: true,
+        },
       },
-    });
+    );
 
     expect(privilegeEscalationResponse.status()).toBe(403);
   });

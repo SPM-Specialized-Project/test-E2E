@@ -56,14 +56,17 @@ test.describe('US-002.2 enrollment and retention integrity', () => {
     test.skip(isRemoteHost && !remoteWritesAllowed, 'Set ALLOW_REMOTE_WRITES=true to run remote mutation checks.');
     const tutorToken = await login(request, 'tutor@gmail.com', 'tutor123');
 
-    const response = await request.post(`${apiBaseURL}/api/classrooms/2/memberships`, {
-      headers: { Authorization: `Bearer ${tutorToken}` },
-      data: { studentEmail: 'missing.student@example.com' },
-    });
+    const response = await request.post(
+      `${apiBaseURL}/api/classrooms/2/memberships`,
+      {
+        headers: { Authorization: `Bearer ${tutorToken}` },
+        data: { studentEmail: "missing.student@example.com" },
+      },
+    );
 
     expect(response.status()).toBe(404);
     const payload = await response.json();
-    expect(payload.code).toBe('STUDENT_NOT_FOUND');
+    expect(payload.code).toBe("STUDENT_NOT_FOUND");
   });
 
   test('re-adding a previously revoked student reactivates their membership', async ({ request }) => {

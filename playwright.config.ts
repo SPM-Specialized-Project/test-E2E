@@ -1,9 +1,9 @@
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig, devices } from "@playwright/test";
 
 import { appBaseURL, isRemoteHost } from './tests/fixtures/target-host';
 
 export default defineConfig({
-  testDir: './tests',
+  testDir: "./tests",
   timeout: 30_000,
   expect: {
     timeout: 10_000,
@@ -39,8 +39,8 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
     },
   ],
 });
