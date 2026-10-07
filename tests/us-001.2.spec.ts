@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const apiBaseURL = process.env.API_BASE_URL ?? 'http://127.0.0.1:4000';
+import { apiBaseURL, appBaseURL, isRemoteHost, remoteWritesAllowed } from './fixtures/target-host';
 
 async function login(request: Parameters<typeof test>[0]['request'], email: string, password: string) {
   const response = await request.post(`${apiBaseURL}/api/auth/login`, {
@@ -36,6 +36,7 @@ test.describe('US-001.2 authorization boundary tests', () => {
   });
 
   test('lecturer cannot edit another student workspace through the API', async ({ request }) => {
+    test.skip(isRemoteHost && !remoteWritesAllowed, 'Set ALLOW_REMOTE_WRITES=true to run remote mutation checks.');
     const lecturerToken = await login(request, 'lecturer@gmail.com', 'lecturer123');
 
     const response = await request.patch(`${apiBaseURL}/api/codepulse/workspaces/workspace-2`, {
@@ -49,6 +50,7 @@ test.describe('US-001.2 authorization boundary tests', () => {
   });
 
   test('student cannot access foreign workspace and is_admin payload has no effect on permissions', async ({ request }) => {
+    test.skip(isRemoteHost && !remoteWritesAllowed, 'Set ALLOW_REMOTE_WRITES=true to run remote mutation checks.');
     const studentToken = await login(request, 'student@gmail.com', 'student123');
 
     const foreignWorkspaceResponse = await request.get(`${apiBaseURL}/api/codepulse/workspaces/workspace-2`, {
@@ -68,6 +70,7 @@ test.describe('US-001.2 authorization boundary tests', () => {
   });
 
   test('revoked membership blocks the next API request immediately', async ({ request }) => {
+    test.skip(isRemoteHost && !remoteWritesAllowed, 'Set ALLOW_REMOTE_WRITES=true to run remote mutation checks.');
     const adminToken = await login(request, 'admin@gmail.com', 'admin123');
     const student2Token = await login(request, 'student2@gmail.com', 'student2123');
 
@@ -77,25 +80,32 @@ test.describe('US-001.2 authorization boundary tests', () => {
     });
     expect(revokeResponse.status()).toBe(200);
 
-    const blockedWorkspaceResponse = await request.get(`${apiBaseURL}/api/codepulse/workspaces/workspace-2`, {
+    try {
+      const blockedWorkspaceResponse = await request.get(`${apiBaseURL}/api/codepulse/workspaces/workspace-2`, {
       headers: { Authorization: `Bearer ${student2Token}` },
-    });
-    expect(blockedWorkspaceResponse.status()).toBe(403);
+      });
+      expect(blockedWorkspaceResponse.status()).toBe(403);
 
-    const blockedClassroomResponse = await request.get(`${apiBaseURL}/api/codepulse/classrooms/class-1`, {
-      headers: { Authorization: `Bearer ${student2Token}` },
-    });
-    expect(blockedClassroomResponse.status()).toBe(403);
+      const blockedClassroomResponse = await request.get(`${apiBaseURL}/api/codepulse/classrooms/class-1`, {
+        headers: { Authorization: `Bearer ${student2Token}` },
+      });
+      expect(blockedClassroomResponse.status()).toBe(403);
+    } finally {
+      const restoreResponse = await request.patch(`${apiBaseURL}/api/codepulse/memberships/member-2`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        data: { status: 'active' },
+      });
+      expect(restoreResponse.ok()).toBeTruthy();
+    }
   });
 
   test('invalid login credentials display inline errors and keep the user on the login page', async ({ page }) => {
-    await page.goto(`${process.env.BASE_URL ?? 'http://127.0.0.1:3000'}/login`);
+    await page.goto(`${appBaseURL}/login`);
     await page.locator('#email').fill('wrong@example.com');
     await page.locator('#password').fill('wrong-password');
     await page.getByRole('button', { name: 'Đăng nhập' }).click();
 
-    await expect(page.getByText('sai tên người dùng')).toBeVisible();
-    await expect(page.getByText('sai mật khẩu')).toBeVisible();
+    await expect(page.getByText('Email hoặc mật khẩu không đúng!', { exact: true })).toBeVisible();
     await expect(page).toHaveURL(/\/login\/?$/);
   });
 });

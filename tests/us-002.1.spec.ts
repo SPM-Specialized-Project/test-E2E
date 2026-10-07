@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const appBaseURL = process.env.BASE_URL ?? 'http://127.0.0.1:3000';
+import { appBaseURL } from './fixtures/target-host';
 
 test.describe('US-002.1 - dashboard course list', () => {
   test('displays the dashboard and the available course', async ({ page }) => {
@@ -12,7 +12,7 @@ test.describe('US-002.1 - dashboard course list', () => {
     await expect(page).toHaveURL(/\/dashboard\/?$/);
     await expect(page.getByRole('heading', { name: 'Khóa học' })).toBeVisible();
     await expect(page.getByText('Danh sách khóa học của bạn')).toBeVisible();
-    await expect(page.getByText('Lập trình cơ bản')).toBeVisible();
-    await expect(page.getByText('CS101')).toBeVisible();
+    await expect(page.getByText('Computer Network', { exact: true })).toBeVisible();
+    await expect(page.getByText('Database System', { exact: true })).toBeVisible();
   });
 });

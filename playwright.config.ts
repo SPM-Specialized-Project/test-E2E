@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const baseURL = process.env.BASE_URL ?? 'http://127.0.0.1:3000';
+import { appBaseURL, isRemoteHost } from './tests/fixtures/target-host';
 
 export default defineConfig({
   testDir: './tests',
@@ -15,22 +15,24 @@ export default defineConfig({
   reporter: process.env.CI
     ? [['line'], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
     : 'list',
-  webServer: [
-    {
-      command: 'cd ../spm && npm run backend',
-      url: 'http://127.0.0.1:4000/api/health',
-      reuseExistingServer: true,
-      timeout: 120000,
-    },
-    {
-      command: 'cd ../spm/frontend && npm run dev -- --host 127.0.0.1 --strictPort',
-      url: 'http://127.0.0.1:3000',
-      reuseExistingServer: true,
-      timeout: 180000,
-    },
-  ],
+  ...(isRemoteHost ? {} : {
+    webServer: [
+      {
+        command: 'cd ../spm && npm run backend',
+        url: 'http://127.0.0.1:4000/api/health',
+        reuseExistingServer: true,
+        timeout: 120000,
+      },
+      {
+        command: 'cd ../spm/frontend && npm run dev -- --host 127.0.0.1 --strictPort',
+        url: 'http://127.0.0.1:3000',
+        reuseExistingServer: true,
+        timeout: 180000,
+      },
+    ],
+  }),
   use: {
-    baseURL,
+    baseURL: appBaseURL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

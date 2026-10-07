@@ -4,9 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { testAccounts } from './fixtures/test-data';
-
-const apiBaseURL = process.env.API_BASE_URL ?? 'http://127.0.0.1:4000';
-const appBaseURL = process.env.BASE_URL ?? 'http://127.0.0.1:3000';
+import { apiBaseURL, appBaseURL, isRemoteHost } from './fixtures/target-host';
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const backendRoot = path.join(projectRoot, 'spm', 'backend');
 const backendEntry = path.join(backendRoot, 'server.mjs');
@@ -119,11 +117,12 @@ test.describe('Authentication and security requirements', () => {
     await page.locator('#password').fill(testAccounts.student.password);
     await page.getByRole('button', { name: 'Đăng nhập' }).click();
 
-    await expect(page.getByText('Email hoặc mật khẩu không đúng!')).toHaveCount(2);
+    await expect(page.getByText('Email hoặc mật khẩu không đúng!')).toBeVisible();
     await expect(page).toHaveURL(/\/login\/?$/);
   });
 
   test('wrong password and non-existent user return the same message with near-identical timing', async ({ request }) => {
+    test.skip(isRemoteHost, 'Network latency makes single-request timing comparisons unreliable on remote hosts.');
     const wrongPasswordStart = Date.now();
     const wrongPasswordResponse = await request.post(`${apiBaseURL}/api/auth/login`, {
       data: {
@@ -164,8 +163,8 @@ test.describe('Authentication and security requirements', () => {
     await page.getByRole('button', { name: 'Đăng nhập' }).click();
 
     await expect(page).toHaveURL(/\/login\/?$/);
-    await expect.poll(() => page.locator('#email').evaluate((el) => (el as HTMLInputElement).validity.valid)).toBe(false);
-    await expect.poll(() => page.locator('#password').evaluate((el) => (el as HTMLInputElement).validity.valid)).toBe(false);
+    await expect(page.getByText('Vui lòng nhập email')).toBeVisible();
+    await expect(page.getByText('Vui lòng nhập mật khẩu')).toBeVisible();
     expect(loginRequests).toHaveLength(0);
   });
 
@@ -181,27 +180,11 @@ test.describe('Authentication and security requirements', () => {
   });
 
   test('passwords are not logged in plain text in the server logs', async () => {
+    test.skip(isRemoteHost, 'A remote E2E client cannot inspect the application server process logs.');
     const secretPassword = 'PlainTextPassword123';
     const { payload, logText } = await withCapturedBackendLogs(secretPassword);
 
     expect(payload.message).toBe('Email hoặc mật khẩu không đúng!');
     expect(logText.toLowerCase()).not.toContain(secretPassword.toLowerCase());
-  });
-
-  test('required email and password are enforced before a login request is sent', async ({ page }) => {
-    const loginRequests: string[] = [];
-    page.on('request', (request) => {
-      if (request.url().includes('/api/auth/login')) {
-        loginRequests.push(request.url());
-      }
-    });
-
-    await page.goto(`${appBaseURL}/login`);
-    await page.getByRole('button', { name: 'Đăng nhập' }).click();
-
-    await expect(page).toHaveURL(/\/login\/?$/);
-    await expect.poll(() => page.locator('#email').evaluate((el) => (el as HTMLInputElement).validity.valid)).toBe(false);
-    await expect.poll(() => page.locator('#password').evaluate((el) => (el as HTMLInputElement).validity.valid)).toBe(false);
-    expect(loginRequests).toHaveLength(0);
   });
 });

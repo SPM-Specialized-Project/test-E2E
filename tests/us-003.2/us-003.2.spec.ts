@@ -1,146 +1,173 @@
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import {
+  expect,
+  request as playwrightRequest,
+  test,
+  type Page,
+} from '@playwright/test';
+import {
+  apiBaseURL,
+  isRemoteHost,
+  remoteWritesAllowed,
+} from '../fixtures/target-host';
 
-import { lecturerAccount, studentAccount } from './fixtures/accounts';
-
-const apiBaseURL = 'http://127.0.0.1:4100';
-const classroomAssignmentsURL = '/api/codepulse/classrooms/class-1/assignments';
-
-type AssignmentVersion = {
-  id: string;
-  assignmentId: string;
-  version: number;
-  description: string;
-  testCases: Array<{
-    id: string;
-    input: string;
-    expectedOutput: string;
-    hidden: boolean;
-    weight: number;
-  }>;
-  comparator: {
-    normalizeLineEndings: boolean;
-    trimTrailingNewline: boolean;
-  };
-  usedAt: string | null;
+const lecturer = {
+  email: 'lecturer@gmail.com',
+  password: 'lecturer123',
 };
+const student = {
+  email: 'student@gmail.com',
+  password: 'student123',
+};
+const classroomId = 'class-1';
 
-async function authenticate(
-  playwright: typeof import('playwright-core'),
-  request: APIRequestContext,
-  account: { email: string; password: string },
-): Promise<APIRequestContext> {
-  const response = await request.post(`${apiBaseURL}/api/auth/login`, { data: account });
-  expect(response.status()).toBe(200);
-  const { accessToken } = await response.json() as { accessToken: string };
-  return playwright.request.newContext({
-    baseURL: apiBaseURL,
-    extraHTTPHeaders: { Authorization: `Bearer ${accessToken}` },
-  });
+interface Assignment {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  verificationStatus: string;
+  testCases: Array<{ id: string; input: string; expectedOutput: string; verified?: boolean }>;
 }
 
-test('US-003.2: editing a used assignment creates a new version and keeps the old suite immutable', async ({
-  page,
-  request,
-  playwright,
-}) => {
-  const lecturerApi = await authenticate(playwright, request, lecturerAccount);
-  const studentApi = await authenticate(playwright, request, studentAccount);
+async function authenticate(page: Page, credentials: typeof lecturer) {
+  await page.goto('/login');
+  await page.getByLabel(/email/i).fill(credentials.email);
+  await page.getByLabel(/password/i).fill(credentials.password);
+  await page.getByRole('button', { name: /sign in|đăng nhập/i }).click();
+}
+
+async function apiLogin(credentials: typeof lecturer) {
+  const api = await playwrightRequest.newContext({ baseURL: apiBaseURL });
+  try {
+    const response = await api.post('/api/auth/login', { data: credentials });
+    expect(response.ok(), `Login failed: ${response.status()}`).toBeTruthy();
+    const body = await response.json();
+    return body.accessToken as string;
+  } finally {
+    await api.dispose();
+  }
+}
+
+test('editing a published assignment requires reverification before republishing', async ({ page }) => {
+  test.skip(
+    isRemoteHost && !remoteWritesAllowed,
+    'Remote write tests require ALLOW_REMOTE_WRITES=true on a dedicated test host.',
+  );
+
+  const lecturerToken = await apiLogin(lecturer);
+  const lecturerApi = await playwrightRequest.newContext({
+    baseURL: apiBaseURL,
+    extraHTTPHeaders: { Authorization: `Bearer ${lecturerToken}` },
+  });
+  const studentToken = await apiLogin(student);
+  const studentApi = await playwrightRequest.newContext({
+    baseURL: apiBaseURL,
+    extraHTTPHeaders: { Authorization: `Bearer ${studentToken}` },
+  });
+  const suffix = `${Date.now()}`;
+  const originalDescription = `Assignment description ${suffix}`;
+  const editedDescription = `Edited assignment description ${suffix}`;
+  let assignmentId: string | undefined;
 
   try {
-    const assignmentTitle = `US-003.2 immutable version ${Date.now()}`;
-    const originalDescription = 'Original version description.';
-    const originalTestCases = [
-      { id: 'public-v1', input: '2 3', expectedOutput: '5\n', hidden: false, weight: 3, verified: true },
-      { id: 'hidden-v1', input: '4 5', expectedOutput: '9\n', hidden: true, weight: 2, verified: true },
-    ];
-    const createResponse = await lecturerApi.post(classroomAssignmentsURL, {
-      data: {
-        title: assignmentTitle,
-        description: originalDescription,
-        constraints: 'Two integers.',
-        inputFormat: 'Two integers separated by a space.',
-        outputFormat: 'Their sum.',
-        cpuTimeLimitMs: 5_000,
-        memoryLimitMb: 128,
-        runtime: 'PYTHON',
-        referenceSolution: 'a, b = map(int, input().split())\nprint(a + b)',
-        comparator: { normalizeLineEndings: true, trimTrailingNewline: true },
-        testCases: originalTestCases,
+    const createResponse = await lecturerApi.post(
+      `/api/codepulse/classrooms/${classroomId}/assignments`,
+      {
+        data: {
+          title: `E2E assignment ${suffix}`,
+          description: originalDescription,
+          constraints: 'Input contains one integer.',
+          inputFormat: 'One integer.',
+          outputFormat: 'Print the integer.',
+          cpuTimeLimitMs: 1_000,
+          memoryLimitMb: 128,
+          runtime: 'PYTHON',
+          referenceSolution: 'print(input())',
+          testCases: [
+            { id: `case-${suffix}`, input: '7', expectedOutput: '7' },
+          ],
+        },
       },
-    });
+    );
     expect(createResponse.status()).toBe(201);
-    const { item: createdAssignment } = await createResponse.json() as { item: { id: string } };
-    const assignmentId = createdAssignment.id;
+    const created = (await createResponse.json()).item as Assignment;
+    assignmentId = created.id;
 
-    const verifyResponse = await lecturerApi.post(`${classroomAssignmentsURL}/${assignmentId}/verify`);
+    const verifyResponse = await lecturerApi.post(
+      `/api/codepulse/classrooms/${classroomId}/assignments/${assignmentId}/verify`,
+    );
     expect(verifyResponse.status()).toBe(200);
-    const publishResponse = await lecturerApi.post(`${classroomAssignmentsURL}/${assignmentId}/publish`);
+    expect((await verifyResponse.json()).item.verificationStatus).toBe('VERIFIED');
+
+    const publishResponse = await lecturerApi.post(
+      `/api/codepulse/classrooms/${classroomId}/assignments/${assignmentId}/publish`,
+    );
     expect(publishResponse.status()).toBe(200);
+    expect((await publishResponse.json()).item.status).toBe('PUBLISHED');
+    expect(
+      (await studentApi.get(
+        `/api/codepulse/classrooms/${classroomId}/assignments/${assignmentId}`,
+      )).status(),
+    ).toBe(200);
 
-    const submitResponse = await studentApi.post(`${classroomAssignmentsURL}/${assignmentId}/submissions`, {
-      data: { sourceCode: 'a, b = map(int, input().split())\nprint(a + b)' },
-    });
-    expect(submitResponse.status()).toBe(201);
-    const { item: submission } = await submitResponse.json() as {
-      item: { assignmentVersionId: string };
-    };
-
-    await page.goto('/login');
-    await page.getByLabel('Email').fill(lecturerAccount.email);
-    await page.getByLabel('Password').fill(lecturerAccount.password);
-    await page.getByRole('button', { name: 'Đăng nhập' }).click();
+    await authenticate(page, lecturer);
     await expect(page).toHaveURL(/dashboard/);
+    await page.goto('/course/13#terms');
+    await page.getByLabel('Chỉnh sửa chế độ').check();
+    const assignmentEditor = page.locator('section').filter({ hasText: 'Assignment authoring' }).last();
+    await expect(assignmentEditor).toBeVisible();
+    await assignmentEditor.getByRole('button', { name: new RegExp(`E2E assignment ${suffix}`) }).click();
+    await assignmentEditor.getByLabel(/description|mô tả/i).fill(editedDescription);
+    await assignmentEditor.getByRole('button', { name: 'Save draft' }).click();
+    await expect(page.getByText('Đã lưu assignment dưới dạng draft.')).toBeVisible();
 
-    await page.goto('/course/13');
-    await expect(page.getByRole('heading', { name: 'DSA LAB', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Terms and classrooms' }).click();
-    await page.getByRole('checkbox', { name: 'Chỉnh sửa chế độ' }).check();
-    await expect(page.getByText('Assignment authoring')).toBeVisible();
+    const draftResponse = await lecturerApi.get(
+      `/api/codepulse/classrooms/${classroomId}/assignments/${assignmentId}`,
+    );
+    expect(draftResponse.status()).toBe(200);
+    const draft = (await draftResponse.json()).item as Assignment;
+    expect(draft.description).toBe(editedDescription);
+    expect(draft.status).toBe('DRAFT');
+    expect(draft.verificationStatus).toBe('UNVERIFIED');
+    expect(
+      (await studentApi.get(
+        `/api/codepulse/classrooms/${classroomId}/assignments/${assignmentId}`,
+      )).status(),
+    ).toBe(404);
 
-    await page.getByRole('button', { name: new RegExp(assignmentTitle) }).click();
-    await page.getByLabel('Description').fill('Edited description for the next version.');
-    await page.getByRole('button', { name: 'Save draft' }).click();
-    await expect(page.getByRole('button', { name: new RegExp(`${assignmentTitle}.*Draft`) })).toBeVisible();
-
-    await page.getByRole('button', { name: 'Verify reference solution' }).click();
-    await expect(page.getByText(/Đã verify 2 test case/)).toBeVisible();
-    await page.getByRole('button', { name: 'Publish', exact: true }).click();
+    await assignmentEditor.getByRole('button', { name: 'Verify reference solution' }).click();
+    await expect(page.getByText(/Đã verify 1 test case/)).toBeVisible();
+    await assignmentEditor.getByRole('button', { name: 'Publish', exact: true }).click();
     await expect(page.getByText('Assignment đã được publish.')).toBeVisible();
 
-    const versionsResponse = await lecturerApi.get('/api/codepulse/classrooms/class-1/assignment-versions');
-    expect(versionsResponse.status()).toBe(200);
-    const { items: versions } = await versionsResponse.json() as { items: AssignmentVersion[] };
-    const assignmentVersions = versions
-      .filter((version) => version.assignmentId === assignmentId)
-      .sort((left, right) => left.version - right.version);
-
-    expect(assignmentVersions).toHaveLength(2);
-    const [version1, version2] = assignmentVersions;
-    expect(submission.assignmentVersionId).toBe(version1.id);
-    expect(version1.usedAt).toBeTruthy();
-    expect(version1.description).toBe(originalDescription);
-    expect(version1.testCases).toEqual(originalTestCases);
-    expect(version1.comparator).toEqual({
-      normalizeLineEndings: true,
-      trimTrailingNewline: true,
-    });
-    expect(version2.version).toBe(2);
-    expect(version2.previousVersionId).toBe(version1.id);
-    expect(version2.description).toBe('Edited description for the next version.');
-    await expect(page.getByText('Version 2', { exact: true })).toBeVisible();
-
-    const historyResponse = await lecturerApi.get(
-      `/api/codepulse/classrooms/class-1/assignment-versions/${version1.id}/history`,
+    const finalResponse = await lecturerApi.get(
+      `/api/codepulse/classrooms/${classroomId}/assignments/${assignmentId}`,
     );
-    expect(historyResponse.status()).toBe(200);
-    const history = await historyResponse.json() as {
-      item: AssignmentVersion;
-      submissions: Array<{ assignmentVersionId: string }>;
-    };
-    expect(history.item.testCases).toEqual(originalTestCases);
-    expect(history.submissions).toHaveLength(1);
-    expect(history.submissions[0].assignmentVersionId).toBe(version1.id);
+    expect(finalResponse.status()).toBe(200);
+    const finalAssignment = (await finalResponse.json()).item as Assignment;
+    expect(finalAssignment.status).toBe('PUBLISHED');
+    expect(finalAssignment.verificationStatus).toBe('VERIFIED');
+    expect(finalAssignment.description).toBe(editedDescription);
+    expect(finalAssignment.testCases).toEqual([
+      expect.objectContaining({
+        id: `case-${suffix}`,
+        input: '7',
+        expectedOutput: '7',
+        verified: true,
+      }),
+    ]);
+    expect(
+      (await studentApi.get(
+        `/api/codepulse/classrooms/${classroomId}/assignments/${assignmentId}`,
+      )).status(),
+    ).toBe(200);
   } finally {
+    if (assignmentId) {
+      const deleteResponse = await lecturerApi.delete(
+        `/api/codepulse/classrooms/${classroomId}/assignments/${assignmentId}`,
+      );
+      expect(deleteResponse.ok(), `Assignment cleanup failed: ${deleteResponse.status()}`).toBeTruthy();
+    }
     await lecturerApi.dispose();
     await studentApi.dispose();
   }

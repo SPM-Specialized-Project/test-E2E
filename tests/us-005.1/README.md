@@ -2,9 +2,10 @@
 
 These tests cover student Dashboard authorization, scheduled/live session
 access, assigned problem visibility, and isolated workspace state for the
-multi-problem practice flow. The spec starts an isolated backend process with a
-temporary data directory; it does not need a separately running backend or
-frontend.
+multi-problem practice flow. The tests use the host configured in the root
+`.env` file. Local runs create an isolated backend; remote write checks require
+`ALLOW_REMOTE_WRITES=true` and leave a cancelled LAB and related workspace
+records behind.
 
 ## Prerequisites
 
@@ -24,28 +25,27 @@ Playwright's `APIRequestContext`.
 
 ## Run tests
 
-Run the US-005.1 tests:
+From `test-E2E`, run the US-005.1 tests:
 
 ```sh
-npm run test:e2e
+npx playwright test --config=tests/us-005.1/playwright.config.ts tests/us-005.1
 ```
 
-Type-check the test and Playwright configuration:
+List the discovered tests:
 
 ```sh
-npm run test:e2e:types
+npx playwright test --list --config=tests/us-005.1/playwright.config.ts
 ```
 
 Run the backend regression suite:
 
 ```sh
-npm run backend:test
+npm --prefix ../spm run backend:test
 ```
 
 ## Coverage
 
-- The assigned lecturer can read the manager Dashboard; students with an active
-  classroom membership receive only their student Dashboard view.
+- The assigned lecturer can read the manager Dashboard; other roles are denied.
 - Unauthenticated users, students without membership, lecturers assigned to
   another classroom, and admins cannot read the Dashboard.
 - Scheduled LAB problems are listed but cannot be opened or run until the

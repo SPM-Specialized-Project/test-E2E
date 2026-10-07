@@ -1,8 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { loginAs, testAccounts } from './fixtures/test-data';
-
-const apiBaseURL = process.env.API_BASE_URL ?? 'http://127.0.0.1:4000';
+import { apiBaseURL } from './fixtures/target-host';
 
 test.describe('SPM staging smoke', () => {
   test('backend health endpoint is available', async ({ request }) => {
