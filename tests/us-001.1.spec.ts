@@ -1,5 +1,42 @@
-import { expect, test } from "@playwright/test";
-import { testAccounts } from "./fixtures/test-data";
+import { expect, test } from '@playwright/test';
+import { spawn } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { testAccounts } from './fixtures/test-data';
+import { apiBaseURL, appBaseURL, isRemoteHost } from './fixtures/target-host';
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const backendRoot = path.join(projectRoot, 'spm', 'backend');
+const backendEntry = path.join(backendRoot, 'server.mjs');
+
+async function waitForBackend(port: number) {
+  const deadline = Date.now() + 15_000;
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/health`);
+      if (response.ok) {
+        return;
+      }
+    } catch {
+      // retry until the backend is ready
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+
+  throw new Error(`Backend on port ${port} did not start in time`);
+}
+
+async function withCapturedBackendLogs(password: string) {
+  const port = 4100;
+  const child = spawn(process.execPath, [backendEntry], {
+    cwd: backendRoot,
+    env: {
+      ...process.env,
+      BACKEND_PORT: String(port),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
 const apiBaseURL = process.env.API_BASE_URL ?? "http://127.0.0.1:4000";
 const appBaseURL = process.env.BASE_URL ?? "http://127.0.0.1:3000";
@@ -50,37 +87,27 @@ test.describe("Authentication and security requirements", () => {
     page,
   }) => {
     await page.goto(`${appBaseURL}/login`);
-    await page.locator("#email").fill(testAccounts.student.email);
-    await page.locator("#password").fill("wrong-password");
-    await page.getByRole("button", { name: "Đăng nhập" }).click();
+    await page.locator('#email').fill(testAccounts.student.email);
+    await page.locator('#password').fill('wrong-password');
+    await page.getByRole('button', { name: 'Đăng nhập' }).click();
 
-    await expect(
-      page.getByText("Email hoặc mật khẩu không đúng!"),
-    ).toBeVisible();
+    await expect(page.getByText('Email hoặc mật khẩu không đúng!')).toBeVisible();
 
-    await page.locator("#email").fill("missing.user@example.com");
-    await page.locator("#password").fill(testAccounts.student.password);
-    await page.getByRole("button", { name: "Đăng nhập" }).click();
+    await page.locator('#email').fill('missing.user@example.com');
+    await page.locator('#password').fill(testAccounts.student.password);
+    await page.getByRole('button', { name: 'Đăng nhập' }).click();
 
-    // The form keeps the user on the login page and exposes the same generic
-    // error contract; the number of rendered copies is an implementation
-    // detail and differs between the current and staging bundles.
-    await expect(
-      page.getByText("Email hoặc mật khẩu không đúng!").first(),
-    ).toBeVisible();
+    await expect(page.getByText('Email hoặc mật khẩu không đúng!')).toBeVisible();
     await expect(page).toHaveURL(/\/login\/?$/);
   });
 
-  test("wrong password and non-existent user return the same generic response", async ({
-    request,
-  }) => {
-    const wrongPasswordResponse = await request.post(
-      `${apiBaseURL}/api/auth/login`,
-      {
-        data: {
-          email: testAccounts.student.email,
-          password: "wrong-password",
-        },
+  test('wrong password and non-existent user return the same message with near-identical timing', async ({ request }) => {
+    test.skip(isRemoteHost, 'Network latency makes single-request timing comparisons unreliable on remote hosts.');
+    const wrongPasswordStart = Date.now();
+    const wrongPasswordResponse = await request.post(`${apiBaseURL}/api/auth/login`, {
+      data: {
+        email: testAccounts.student.email,
+        password: 'wrong-password',
       },
     );
     const missingUserResponse = await request.post(
@@ -119,8 +146,8 @@ test.describe("Authentication and security requirements", () => {
     await page.getByRole("button", { name: "Đăng nhập" }).click();
 
     await expect(page).toHaveURL(/\/login\/?$/);
-    // Both native required-field validation and the staging bundle's custom
-    // validation satisfy this contract without sending credentials.
+    await expect(page.getByText('Vui lòng nhập email')).toBeVisible();
+    await expect(page.getByText('Vui lòng nhập mật khẩu')).toBeVisible();
     expect(loginRequests).toHaveLength(0);
   });
 
@@ -137,39 +164,15 @@ test.describe("Authentication and security requirements", () => {
     await expect(passwordField).toHaveAttribute("type", "text");
   });
 
-  test("invalid-login responses do not expose the submitted password", async ({
-    request,
-  }) => {
-    const secretPassword = "PlainTextPassword123";
-    const response = await request.post(`${apiBaseURL}/api/auth/login`, {
-      data: {
-        email: "student@gmail.com",
-        password: secretPassword,
-      },
-    });
-    const responseText = await response.text();
+  test('passwords are not logged in plain text in the server logs', async () => {
+    test.skip(isRemoteHost, 'A remote E2E client cannot inspect the application server process logs.');
+    const secretPassword = 'PlainTextPassword123';
+    const { payload, logText } = await withCapturedBackendLogs(secretPassword);
 
     expect(response.status()).toBe(401);
     expect(responseText).toContain("Email hoặc mật khẩu không đúng!");
     expect(responseText.toLowerCase()).not.toContain(
       secretPassword.toLowerCase(),
     );
-  });
-
-  test('required email and password are enforced before a login request is sent', async ({ page }) => {
-    const loginRequests: string[] = [];
-    page.on('request', (request) => {
-      if (request.url().includes('/api/auth/login')) {
-        loginRequests.push(request.url());
-      }
-    });
-
-    await page.goto(`${appBaseURL}/login`);
-    await page.getByRole('button', { name: 'Đăng nhập' }).click();
-
-    await expect(page).toHaveURL(/\/login\/?$/);
-    // The browser bundle may use native or custom validation; both contracts
-    // keep the login request from being sent.
-    expect(loginRequests).toHaveLength(0);
   });
 });

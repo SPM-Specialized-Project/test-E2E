@@ -2,15 +2,26 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { expect, request, test, type APIRequestContext } from '@playwright/test';
+import { apiBaseURL, isRemoteHost, remoteWritesAllowed } from '../fixtures/target-host';
 
-const backendFile = path.resolve(process.cwd(), 'backend', 'server.mjs');
+const backendFile = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+  'spm',
+  'backend',
+  'server.mjs',
+);
 
 let backend: ChildProcess | undefined;
 let backendUrl: string;
 let dataDirectory: string;
 let api: APIRequestContext;
+let cleanupLab: { id: string; lecturerToken: string; stateVersion: number } | undefined;
 
 async function login(email: string, password: string): Promise<string> {
   const response = await api.post('/api/auth/login', {
@@ -35,6 +46,12 @@ function apiRequest(
 }
 
 test.beforeAll(async () => {
+  if (isRemoteHost) {
+    backendUrl = apiBaseURL;
+    api = await request.newContext({ baseURL: backendUrl });
+    return;
+  }
+
   dataDirectory = await mkdtemp(path.join(os.tmpdir(), 'spm-us0051-'));
   backend = spawn(process.execPath, [backendFile], {
     env: {
@@ -83,6 +100,18 @@ test.afterAll(async () => {
   }
 });
 
+test.afterEach(async () => {
+  if (!cleanupLab) return;
+  const response = await apiRequest(
+    cleanupLab.lecturerToken,
+    `/api/codepulse/classrooms/class-1/labs/${cleanupLab.id}`,
+    'PATCH',
+    { status: 'CANCELLED', expectedStateVersion: cleanupLab.stateVersion },
+  );
+  expect(response.status()).toBe(200);
+  cleanupLab = undefined;
+});
+
 test('US-005.1: dashboard permission follows the assigned classroom role', async () => {
   const student = await login('student@gmail.com', 'student123');
   const studentWithoutMembership = await login(
@@ -96,11 +125,7 @@ test('US-005.1: dashboard permission follows the assigned classroom role', async
 
   expect((await apiRequest(undefined, dashboard)).status()).toBe(401);
   const studentResult = await apiRequest(student, dashboard);
-  expect(studentResult.status()).toBe(200);
-  const studentDashboard = (await studentResult.json()) as {
-    sessions: unknown[];
-  };
-  expect(studentDashboard.sessions).toEqual([]);
+  expect(studentResult.status()).toBe(403);
   expect((await apiRequest(studentWithoutMembership, dashboard)).status()).toBe(
     403,
   );
@@ -119,6 +144,7 @@ test('US-005.1: dashboard permission follows the assigned classroom role', async
 });
 
 test('US-005.1: student workspaces keep saved code isolated per problem', async () => {
+  test.skip(isRemoteHost && !remoteWritesAllowed, 'Set ALLOW_REMOTE_WRITES=true to run remote mutation checks.');
   const student = await login('student@gmail.com', 'student123');
   const secondStudent = await login('student2@gmail.com', 'student2123');
   const lecturer = await login('lecturer@gmail.com', 'lecturer123');
@@ -132,7 +158,7 @@ test('US-005.1: student workspaces keep saved code isolated per problem', async 
   );
   expect(versionsResponse.status()).toBe(200);
   const versions = (await versionsResponse.json()) as {
-    items: Array<{ id: string }>;
+    items: Array<{ id: string; starterCode?: string }>;
   };
   expect(versions.items.length).toBeGreaterThanOrEqual(2);
 
@@ -156,19 +182,24 @@ test('US-005.1: student workspaces keep saved code isolated per problem', async 
   );
   expect(createdLabResponse.status()).toBe(201);
   const createdLab = (await createdLabResponse.json()) as {
-    item: { id: string; status: string };
+    item: { id: string; status: string; stateVersion: number };
+  };
+  cleanupLab = {
+    id: createdLab.item.id,
+    lecturerToken: lecturer,
+    stateVersion: createdLab.item.stateVersion,
   };
 
   const liveResponse = await apiRequest(
     lecturer,
     `${labsRoute}/${createdLab.item.id}`,
     'PATCH',
-    { status: 'LIVE' },
+    { status: 'LIVE', expectedStateVersion: createdLab.item.stateVersion },
   );
   expect(liveResponse.status()).toBe(200);
-  expect(
-    (await liveResponse.json()).item.status,
-  ).toBe('LIVE');
+  const liveLab = (await liveResponse.json()).item;
+  expect(liveLab.status).toBe('LIVE');
+  cleanupLab.stateVersion = liveLab.stateVersion;
 
   const studentLabsResponse = await apiRequest(student, labsRoute);
   expect(studentLabsResponse.status()).toBe(200);
@@ -185,31 +216,6 @@ test('US-005.1: student workspaces keep saved code isolated per problem', async 
   const lab = studentLabs.items.find((item) => item.id === createdLab.item.id);
   expect(lab).toBeDefined();
   expect(lab?.assignments).toHaveLength(2);
-  const liveStudentDashboard = await apiRequest(
-    student,
-    `/api/codepulse/classrooms/${classroomId}/dashboard`,
-  );
-  expect(liveStudentDashboard.status()).toBe(200);
-  const liveDashboardData = (await liveStudentDashboard.json()) as {
-    sessions: Array<{
-      id: string;
-      assignments: Array<{
-        id: string;
-        canAccessNow: boolean;
-        problem: { title: string };
-        workspaceId?: string;
-      }>;
-    }>;
-  };
-  const liveSession = liveDashboardData.sessions.find(
-    (item) => item.id === createdLab.item.id,
-  );
-  expect(liveSession?.assignments[0].canAccessNow).toBe(true);
-  expect(liveSession?.assignments[0].problem.title).toBeTruthy();
-  expect(liveSession?.assignments[0].workspaceId).toBeTruthy();
-  expect(JSON.stringify(liveDashboardData).includes('secret input')).toBe(
-    false,
-  );
   const assignmentList = await apiRequest(
     student,
     `/api/codepulse/classrooms/${classroomId}/assignments`,
@@ -240,8 +246,10 @@ test('US-005.1: student workspaces keep saved code isolated per problem', async 
   const initialSecondWorkspace = await apiRequest(student, secondWorkspaceRoute);
   expect(initialFirstWorkspace.status()).toBe(200);
   expect(initialSecondWorkspace.status()).toBe(200);
-  expect((await initialFirstWorkspace.json()).item.sourceCode).toBe('');
-  expect((await initialSecondWorkspace.json()).item.sourceCode).toBe('');
+  const firstWorkspace = (await initialFirstWorkspace.json()).item;
+  const secondWorkspace = (await initialSecondWorkspace.json()).item;
+  expect(firstWorkspace.sourceCode).toBe(versions.items[0].starterCode ?? '');
+  expect(secondWorkspace.sourceCode).toBe(versions.items[1].starterCode ?? '');
   expect(
     (
       await apiRequest(
@@ -260,7 +268,7 @@ test('US-005.1: student workspaces keep saved code isolated per problem', async 
   const savedFirstWorkspace = await apiRequest(student, firstWorkspaceRoute);
   const untouchedSecondWorkspace = await apiRequest(student, secondWorkspaceRoute);
   expect((await savedFirstWorkspace.json()).item.sourceCode).toBe(firstProblemCode);
-  expect((await untouchedSecondWorkspace.json()).item.sourceCode).toBe('');
+  expect((await untouchedSecondWorkspace.json()).item.sourceCode).toBe(versions.items[1].starterCode ?? '');
 
   expect((await apiRequest(secondStudent, firstWorkspaceRoute)).status()).toBe(
     403,
