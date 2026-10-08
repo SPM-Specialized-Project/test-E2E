@@ -4,6 +4,8 @@ import { appBaseURL, isRemoteHost } from './tests/fixtures/target-host';
 
 export default defineConfig({
   testDir: "./tests",
+  testIgnore: process.env.RUN_US006 === 'true' ? [] : ['**/us-006/**'],
+  globalSetup: './tests/fixtures/prepare-staging.ts',
   timeout: 30_000,
   expect: {
     timeout: 10_000,
@@ -11,7 +13,7 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: process.env.CI || isRemoteHost ? 1 : undefined,
   reporter: process.env.CI
     ? [['line'], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
     : 'list',

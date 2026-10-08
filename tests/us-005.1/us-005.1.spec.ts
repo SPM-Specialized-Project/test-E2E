@@ -22,6 +22,7 @@ let backendUrl: string;
 let dataDirectory: string;
 let api: APIRequestContext;
 let cleanupLab: { id: string; lecturerToken: string; stateVersion: number } | undefined;
+const cleanupAssignments: Array<{ id: string; lecturerToken: string }> = [];
 
 async function login(email: string, password: string): Promise<string> {
   const response = await api.post('/api/auth/login', {
@@ -101,15 +102,27 @@ test.afterAll(async () => {
 });
 
 test.afterEach(async () => {
-  if (!cleanupLab) return;
-  const response = await apiRequest(
-    cleanupLab.lecturerToken,
-    `/api/codepulse/classrooms/class-1/labs/${cleanupLab.id}`,
-    'PATCH',
-    { status: 'CANCELLED', expectedStateVersion: cleanupLab.stateVersion },
-  );
-  expect(response.status()).toBe(200);
-  cleanupLab = undefined;
+  try {
+    if (cleanupLab) {
+      const response = await apiRequest(
+        cleanupLab.lecturerToken,
+        `/api/codepulse/classrooms/class-1/labs/${cleanupLab.id}`,
+        'PATCH',
+        { status: 'CANCELLED', expectedStateVersion: cleanupLab.stateVersion },
+      );
+      expect(response.status()).toBe(200);
+      cleanupLab = undefined;
+    }
+  } finally {
+    for (const assignment of cleanupAssignments.splice(0)) {
+      const response = await apiRequest(
+        assignment.lecturerToken,
+        `/api/codepulse/classrooms/class-1/assignments/${assignment.id}`,
+        'DELETE',
+      );
+      expect.soft(response.status()).toBe(200);
+    }
+  }
 });
 
 test('US-005.1: dashboard permission follows the assigned classroom role', async () => {
@@ -145,12 +158,38 @@ test('US-005.1: dashboard permission follows the assigned classroom role', async
 
 test('US-005.1: student workspaces keep saved code isolated per problem', async () => {
   test.skip(isRemoteHost && !remoteWritesAllowed, 'Set ALLOW_REMOTE_WRITES=true to run remote mutation checks.');
+  test.setTimeout(60_000);
   const student = await login('student@gmail.com', 'student123');
   const secondStudent = await login('student2@gmail.com', 'student2123');
   const lecturer = await login('lecturer@gmail.com', 'lecturer123');
   const admin = await login('admin@gmail.com', 'admin123');
   const classroomId = 'class-1';
   const labsRoute = `/api/codepulse/classrooms/${classroomId}/labs`;
+  const assignmentsRoute = `/api/codepulse/classrooms/${classroomId}/assignments`;
+  const fixtureAssignmentIds: string[] = [];
+  for (const index of [1, 2]) {
+    const created = await apiRequest(lecturer, assignmentsRoute, 'POST', {
+      title: `E2E US-005.1 problem ${index} ${Date.now()}`,
+      description: 'Echo one integer to verify workspace isolation.',
+      constraints: 'Input contains one integer.',
+      inputFormat: 'One integer.',
+      outputFormat: 'Print the integer.',
+      cpuTimeLimitMs: 1_000,
+      memoryLimitMb: 128,
+      runtime: 'PYTHON',
+      referenceSolution: 'print(input())',
+      testCases: [
+        { id: `public-${index}`, input: '7', expectedOutput: '7', hidden: false },
+        { id: `hidden-${index}`, input: '8', expectedOutput: '8', hidden: true },
+      ],
+    });
+    expect(created.status()).toBe(201);
+    const { item } = await created.json();
+    fixtureAssignmentIds.push(item.id);
+    cleanupAssignments.push({ id: item.id, lecturerToken: lecturer });
+    expect((await apiRequest(lecturer, `${assignmentsRoute}/${item.id}/verify`, 'POST')).status()).toBe(200);
+    expect((await apiRequest(lecturer, `${assignmentsRoute}/${item.id}/publish`, 'POST')).status()).toBe(200);
+  }
 
   const versionsResponse = await apiRequest(
     lecturer,
@@ -158,9 +197,12 @@ test('US-005.1: student workspaces keep saved code isolated per problem', async 
   );
   expect(versionsResponse.status()).toBe(200);
   const versions = (await versionsResponse.json()) as {
-    items: Array<{ id: string; starterCode?: string }>;
+    items: Array<{ id: string; assignmentId: string; starterCode?: string }>;
   };
-  expect(versions.items.length).toBeGreaterThanOrEqual(2);
+  const selectedVersions = versions.items.filter((version) =>
+    fixtureAssignmentIds.includes(version.assignmentId),
+  );
+  expect(selectedVersions).toHaveLength(2);
 
   const startAt = new Date(Date.now() - 60_000).toISOString();
   const endAt = new Date(Date.now() + 60 * 60_000).toISOString();
@@ -172,7 +214,7 @@ test('US-005.1: student workspaces keep saved code isolated per problem', async 
       name: 'US-005.1 workspace isolation',
       startAt,
       endAt,
-      assignments: versions.items.slice(0, 2).map((version) => ({
+      assignments: selectedVersions.map((version) => ({
         assignmentVersionId: version.id,
         mandatory: true,
         practiceStartAt: startAt,
@@ -225,14 +267,18 @@ test('US-005.1: student workspaces keep saved code isolated per problem', async 
     items: Array<{ id: string }>;
   };
   expect(
-    visibleAssignments.items.every((item) =>
-      lab!.assignments.some((assigned) => assigned.assignmentId === item.id),
+    lab!.assignments.every((assigned) =>
+      visibleAssignments.items.some((item) => assigned.assignmentId === item.id),
     ),
   ).toBe(true);
+  const unassignedProblem = visibleAssignments.items.find((item) =>
+    !lab!.assignments.some((assigned) => assigned.assignmentId === item.id),
+  );
+  expect(unassignedProblem).toBeDefined();
   expect(
     (await apiRequest(
       student,
-      `/api/codepulse/classrooms/${classroomId}/problems/problem-3`,
+      `/api/codepulse/classrooms/${classroomId}/workspace?assignmentId=${unassignedProblem!.id}&labId=${lab!.id}`,
     )).status(),
   ).toBe(404);
 
@@ -248,8 +294,8 @@ test('US-005.1: student workspaces keep saved code isolated per problem', async 
   expect(initialSecondWorkspace.status()).toBe(200);
   const firstWorkspace = (await initialFirstWorkspace.json()).item;
   const secondWorkspace = (await initialSecondWorkspace.json()).item;
-  expect(firstWorkspace.sourceCode).toBe(versions.items[0].starterCode ?? '');
-  expect(secondWorkspace.sourceCode).toBe(versions.items[1].starterCode ?? '');
+  expect(firstWorkspace.sourceCode).toBe(selectedVersions[0].starterCode ?? '');
+  expect(secondWorkspace.sourceCode).toBe(selectedVersions[1].starterCode ?? '');
   expect(
     (
       await apiRequest(
@@ -268,7 +314,7 @@ test('US-005.1: student workspaces keep saved code isolated per problem', async 
   const savedFirstWorkspace = await apiRequest(student, firstWorkspaceRoute);
   const untouchedSecondWorkspace = await apiRequest(student, secondWorkspaceRoute);
   expect((await savedFirstWorkspace.json()).item.sourceCode).toBe(firstProblemCode);
-  expect((await untouchedSecondWorkspace.json()).item.sourceCode).toBe(versions.items[1].starterCode ?? '');
+  expect((await untouchedSecondWorkspace.json()).item.sourceCode).toBe(selectedVersions[1].starterCode ?? '');
 
   expect((await apiRequest(secondStudent, firstWorkspaceRoute)).status()).toBe(
     403,
@@ -285,7 +331,7 @@ test('US-005.1: student workspaces keep saved code isolated per problem', async 
 
   const problemResponse = await apiRequest(
     student,
-    `/api/codepulse/classrooms/${classroomId}/problems/problem-1`,
+    `/api/codepulse/classrooms/${classroomId}/problems/${lab!.assignments[0].assignmentId}`,
   );
   expect(problemResponse.status()).toBe(200);
   const problem = (await problemResponse.json()) as {

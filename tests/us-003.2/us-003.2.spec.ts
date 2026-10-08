@@ -112,7 +112,9 @@ test('editing a published assignment requires reverification before republishing
 
     await authenticate(page, lecturer);
     await expect(page).toHaveURL(/dashboard/);
-    await page.goto('/course/13#terms');
+    await page.getByText('DSA LAB', { exact: true }).click();
+    await expect(page).toHaveURL(/\/course\/13\/?$/);
+    await page.getByRole('button', { name: /học kỳ|terms/i }).click();
     await page.getByLabel('Chỉnh sửa chế độ').check();
     const assignmentEditor = page.locator('section').filter({ hasText: 'Assignment authoring' }).last();
     await expect(assignmentEditor).toBeVisible();
