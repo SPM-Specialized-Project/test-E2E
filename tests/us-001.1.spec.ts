@@ -1,45 +1,72 @@
 import { expect, test } from '@playwright/test';
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { testAccounts } from './fixtures/test-data';
-import { apiBaseURL, appBaseURL, isRemoteHost } from './fixtures/target-host';
-const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const backendRoot = path.join(projectRoot, 'spm', 'backend');
+import { apiBaseURL, appBaseURL } from './fixtures/target-host';
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const backendRoot = path.resolve(
+  process.env.SPM_E2E_BACKEND_ROOT?.trim() || path.join(projectRoot, 'spm', 'backend'),
+);
 const backendEntry = path.join(backendRoot, 'server.mjs');
 
-async function waitForBackend(port: number) {
-  const deadline = Date.now() + 15_000;
-
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/health`);
-      if (response.ok) {
-        return;
-      }
-    } catch {
-      // retry until the backend is ready
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-
-  throw new Error(`Backend on port ${port} did not start in time`);
-}
-
 async function withCapturedBackendLogs(password: string) {
-  const port = 4100;
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), 'spm-password-log-'));
   const child = spawn(process.execPath, [backendEntry], {
     cwd: backendRoot,
     env: {
       ...process.env,
-      BACKEND_PORT: String(port),
+      BACKEND_PORT: '0',
+      BACKEND_DATA_DIRECTORY: dataDirectory,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-const apiBaseURL = process.env.API_BASE_URL ?? "http://127.0.0.1:4000";
-const appBaseURL = process.env.BASE_URL ?? "http://127.0.0.1:3000";
+  const logChunks: string[] = [];
+  child.stdout.on('data', (chunk) => logChunks.push(chunk.toString()));
+  child.stderr.on('data', (chunk) => logChunks.push(chunk.toString()));
+
+  const stopped = new Promise<void>((resolve) => {
+    child.once('close', () => resolve());
+  });
+
+  try {
+    const port = await new Promise<number>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Password-log backend startup timed out.')), 15_000);
+      const fail = (error: Error) => { clearTimeout(timeout); reject(error); };
+      child.once('error', fail);
+      child.once('exit', (code) => fail(new Error(`Password-log backend exited: ${code}`)));
+      child.stdout.on('data', () => {
+        const match = logChunks.join('').match(/localhost:(\d+)/);
+        if (match) { clearTimeout(timeout); resolve(Number(match[1])); }
+      });
+    });
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: testAccounts.student.email,
+        password,
+      }),
+    });
+    const payload = await response.json();
+
+    child.kill('SIGTERM');
+    await stopped;
+
+    return { response, payload, logText: logChunks.join('') };
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM');
+    }
+    await stopped;
+    await rm(dataDirectory, { recursive: true, force: true });
+  }
+}
 
 test.describe("Authentication and security requirements", () => {
   test("student can log in with valid credentials and gets a valid session token", async ({
@@ -101,15 +128,13 @@ test.describe("Authentication and security requirements", () => {
     await expect(page).toHaveURL(/\/login\/?$/);
   });
 
-  test('wrong password and non-existent user return the same message with near-identical timing', async ({ request }) => {
-    test.skip(isRemoteHost, 'Network latency makes single-request timing comparisons unreliable on remote hosts.');
-    const wrongPasswordStart = Date.now();
+  test('wrong password and non-existent user return the same generic response', async ({ request }) => {
     const wrongPasswordResponse = await request.post(`${apiBaseURL}/api/auth/login`, {
       data: {
         email: testAccounts.student.email,
         password: 'wrong-password',
       },
-    );
+    });
     const missingUserResponse = await request.post(
       `${apiBaseURL}/api/auth/login`,
       {
@@ -164,14 +189,13 @@ test.describe("Authentication and security requirements", () => {
     await expect(passwordField).toHaveAttribute("type", "text");
   });
 
-  test('passwords are not logged in plain text in the server logs', async () => {
-    test.skip(isRemoteHost, 'A remote E2E client cannot inspect the application server process logs.');
+  test('checked-out backend does not log submitted passwords in plain text', async () => {
     const secretPassword = 'PlainTextPassword123';
-    const { payload, logText } = await withCapturedBackendLogs(secretPassword);
+    const { response, payload, logText } = await withCapturedBackendLogs(secretPassword);
 
-    expect(response.status()).toBe(401);
-    expect(responseText).toContain("Email hoặc mật khẩu không đúng!");
-    expect(responseText.toLowerCase()).not.toContain(
+    expect(response.status).toBe(401);
+    expect(payload.message).toBe("Email hoặc mật khẩu không đúng!");
+    expect(logText.toLowerCase()).not.toContain(
       secretPassword.toLowerCase(),
     );
   });

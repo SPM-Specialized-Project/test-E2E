@@ -38,9 +38,10 @@ async function setCodePulseMembershipStatus(
 async function resetCodePulseMemberships(
   request: Parameters<typeof test>[0]["request"],
 ) {
+  if (isRemoteHost && !remoteWritesAllowed) return;
+
   const adminToken = await login(request, "admin@gmail.com", "admin123");
   await setCodePulseMembershipStatus(request, adminToken, "member-1", "active");
-  await setCodePulseMembershipStatus(request, adminToken, "member-2", "active");
 }
 
 test.describe("US-001.2 authorization boundary tests", () => {
@@ -95,7 +96,7 @@ test.describe("US-001.2 authorization boundary tests", () => {
       data: {
         sourceCode: 'print("hacked")',
       },
-    );
+    });
 
     expect(response.status()).toBe(403);
   });
@@ -126,26 +127,32 @@ test.describe("US-001.2 authorization boundary tests", () => {
   test('revoked membership blocks the next API request immediately', async ({ request }) => {
     test.skip(isRemoteHost && !remoteWritesAllowed, 'Set ALLOW_REMOTE_WRITES=true to run remote mutation checks.');
     const adminToken = await login(request, 'admin@gmail.com', 'admin123');
-    const student2Token = await login(request, 'student2@gmail.com', 'student2123');
+    const studentToken = await login(request, 'student@gmail.com', 'student123');
 
-    const revokeResponse = await request.patch(`${apiBaseURL}/api/codepulse/memberships/member-2`, {
+    const problemURL = `${apiBaseURL}/api/codepulse/classrooms/class-1/problems/problem-1`;
+    const activeProblemResponse = await request.get(problemURL, {
+      headers: { Authorization: `Bearer ${studentToken}` },
+    });
+    expect(activeProblemResponse.status()).toBe(200);
+
+    const revokeResponse = await request.patch(`${apiBaseURL}/api/codepulse/memberships/member-1`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: { status: 'revoked' },
     });
     expect(revokeResponse.status()).toBe(200);
 
     try {
-      const blockedWorkspaceResponse = await request.get(`${apiBaseURL}/api/codepulse/workspaces/workspace-2`, {
-      headers: { Authorization: `Bearer ${student2Token}` },
+      const blockedProblemResponse = await request.get(problemURL, {
+        headers: { Authorization: `Bearer ${studentToken}` },
       });
-      expect(blockedWorkspaceResponse.status()).toBe(403);
+      expect(blockedProblemResponse.status()).toBe(403);
 
       const blockedClassroomResponse = await request.get(`${apiBaseURL}/api/codepulse/classrooms/class-1`, {
-        headers: { Authorization: `Bearer ${student2Token}` },
+        headers: { Authorization: `Bearer ${studentToken}` },
       });
       expect(blockedClassroomResponse.status()).toBe(403);
     } finally {
-      const restoreResponse = await request.patch(`${apiBaseURL}/api/codepulse/memberships/member-2`, {
+      const restoreResponse = await request.patch(`${apiBaseURL}/api/codepulse/memberships/member-1`, {
         headers: { Authorization: `Bearer ${adminToken}` },
         data: { status: 'active' },
       });

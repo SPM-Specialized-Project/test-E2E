@@ -10,7 +10,7 @@ test.describe('US-002.1 - dashboard course list', () => {
     await page.getByRole('button', { name: 'Đăng nhập' }).click();
 
     await expect(page).toHaveURL(/\/dashboard\/?$/);
-    await expect(page.getByRole('heading', { name: 'Khóa học' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Khóa học', exact: true })).toBeVisible();
     await expect(page.getByText('Danh sách khóa học của bạn')).toBeVisible();
     await expect(page.getByText('Computer Network', { exact: true })).toBeVisible();
     await expect(page.getByText('Database System', { exact: true })).toBeVisible();
