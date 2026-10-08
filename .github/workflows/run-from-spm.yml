@@ -9,6 +9,11 @@ on:
         description: Public staging URL to test, for example https://example.trycloudflare.com
         required: true
         type: string
+      app_ref:
+        description: SPM application ref for the isolated backend log check
+        default: staging
+        required: true
+        type: string
   repository_dispatch:
     types:
       - spm-staging-e2e
@@ -27,10 +32,20 @@ jobs:
     timeout-minutes: 30
     env:
       CI: true
+      ALLOW_REMOTE_WRITES: true
+      SPM_E2E_BACKEND_ROOT: ${{ github.workspace }}/spm/backend
     steps:
       - name: Checkout E2E tests
         uses: actions/checkout@v4
         with:
+          fetch-depth: 1
+
+      - name: Checkout application backend for the log check
+        uses: actions/checkout@v4
+        with:
+          repository: SPM-Specialized-Project/SPM-frontend
+          ref: ${{ github.event.client_payload.app_sha || inputs.app_ref || 'staging' }}
+          path: spm
           fetch-depth: 1
 
       - name: Setup Node.js
