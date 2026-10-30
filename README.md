@@ -48,7 +48,9 @@ files. Membership status is restored after those checks. Assignment-version
 and LAB workflows may leave test records behind, so use a disposable/staging
 environment, not production. US-006 also creates a temporary LIVE LAB and
 workspace for its autosave, recovery, snapshot, and conflict acceptance tests;
-the cancelled LAB's workspace records remain on the host.
+the cancelled LAB's workspace records remain on the host. US-008.1 writes
+official submission records which are permanent and cannot be cleaned up by
+the test, so run it only against a disposable/staging environment.
 
 When remote writes are enabled, global setup activates the demo classroom
 `class-1` in course `13`, restores the primary demo student's membership, and
