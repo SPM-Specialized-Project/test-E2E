@@ -8,6 +8,7 @@ import {
   createSubmissionFixture,
   getSubmissions,
   getWorkspace,
+  getWorkspaceSubmissions,
   openStudentWorkspace,
   replaceEditorCode,
   type SubmissionFixture,
@@ -41,7 +42,7 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
       if (
         request.method() === 'POST'
         && new URL(request.url()).pathname.endsWith(
-          `/labs/${fixture.labId}/assignments/${fixture.labAssignmentId}/submit`,
+          `/workspaces/${fixture.workspaceId}/submissions`,
         )
       ) {
         submitRequests += 1;
@@ -49,7 +50,10 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
       }
     });
 
-    await page.getByRole('button', { name: 'Submit', exact: true }).click();
+    await page
+      .getByRole('region', { name: 'Student code workspace' })
+      .getByRole('button', { name: 'Official submit' })
+      .click();
     const confirmation = page.getByRole('dialog');
     await expect(confirmation).toBeVisible();
     await expect(confirmation).toContainText(fixture.assignmentTitle);
@@ -60,7 +64,7 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
     const responsePromise = page.waitForResponse((response) =>
       response.request().method() === 'POST'
       && new URL(response.url()).pathname.endsWith(
-        `/labs/${fixture.labId}/assignments/${fixture.labAssignmentId}/submit`,
+        `/workspaces/${fixture.workspaceId}/submissions`,
       ),
     );
     await confirmation.getByRole('button', { name: /confirm|submit|nộp/i }).click();
@@ -69,31 +73,30 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
     expect(response.status()).toBe(201);
     expect(submitRequests).toBe(1);
     expect(submissionRequestBody?.sourceCode).toBe(submittedSource);
-    expect(submissionRequestBody?.request_key).toBeTruthy();
+    expect(submissionRequestBody?.requestKey).toBeTruthy();
 
     const submission = (await response.json()).item as {
       id: string;
       sourceCode: string;
       assignmentId: string;
       assignmentVersionId: string;
-      version: number;
-      ownerEmail: string;
+      assignmentVersion: { version: number };
+      student: { email: string };
       acceptedAt: string;
-      submittedAt: string;
     };
     expect(submission.id).toBeTruthy();
     expect(submission.sourceCode).toBe(submittedSource);
     expect(submission.assignmentId).toBe(fixture.assignmentId);
     expect(submission.assignmentVersionId).toBe(fixture.assignmentVersionId);
-    expect(submission.version).toBe(fixture.version);
-    expect(submission.ownerEmail).toBe('student@gmail.com');
+    expect(submission.assignmentVersion.version).toBe(fixture.version);
+    expect(submission.student.email).toBe('student@gmail.com');
     expect(submission.acceptedAt).toBeTruthy();
     const acceptedAt = Date.parse(submission.acceptedAt);
     expect(acceptedAt).toBeGreaterThanOrEqual(acceptedRequestAt);
     expect(acceptedAt).toBeLessThanOrEqual(responseReceivedAt);
 
     await expect(page.getByText(/Pending|Judging|GRADED/i)).toBeVisible();
-    const submissionsBeforeEdit = await getSubmissions(fixture);
+    const submissionsBeforeEdit = await getWorkspaceSubmissions(fixture);
     const storedBeforeEdit = submissionsBeforeEdit.find((item) => item.id === submission.id);
     expect(storedBeforeEdit?.sourceCode).toBe(submittedSource);
 
@@ -106,7 +109,7 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
     );
     expect((await getWorkspace(fixture)).sourceCode).toBe(changedSource);
 
-    const submissionsAfterEdit = await getSubmissions(fixture);
+    const submissionsAfterEdit = await getWorkspaceSubmissions(fixture);
     const storedAfterEdit = submissionsAfterEdit.find((item) => item.id === submission.id);
     expect(storedAfterEdit).toEqual(storedBeforeEdit);
     expect(storedAfterEdit?.sourceCode).toBe(submittedSource);

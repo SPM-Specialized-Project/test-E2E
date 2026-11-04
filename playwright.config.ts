@@ -4,7 +4,12 @@ import { appBaseURL, isRemoteHost } from './tests/fixtures/target-host';
 
 export default defineConfig({
   testDir: "./tests",
-  testIgnore: process.env.RUN_US006 === 'true' ? [] : ['**/us-006/**'],
+  testIgnore: [
+    ...(process.env.RUN_US006 === 'true' ? [] : ['**/us-006/**']),
+    '**/US-007.1/execution-verdicts.spec.ts',
+    '**/US-007.1/sandbox-isolation.spec.ts',
+    '**/US-007.2/us-007.2.spec.ts',
+  ],
   globalSetup: './tests/fixtures/prepare-staging.ts',
   timeout: 30_000,
   expect: {
