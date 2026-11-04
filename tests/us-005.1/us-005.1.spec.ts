@@ -308,6 +308,7 @@ test('US-005.1: student workspaces keep saved code isolated per problem', async 
   const firstProblemCode = 'print("solution for first problem")';
   const saveResponse = await apiRequest(student, firstWorkspaceRoute, 'PATCH', {
     sourceCode: firstProblemCode,
+    baseRevision: firstWorkspace.revision,
   });
   expect(saveResponse.status()).toBe(200);
 

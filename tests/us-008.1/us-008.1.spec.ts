@@ -49,7 +49,10 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
       }
     });
 
-    await page.getByRole('button', { name: 'Submit', exact: true }).click();
+    await page
+      .getByRole('region', { name: 'Student code workspace' })
+      .getByRole('button', { name: 'Official submit' })
+      .click();
     const confirmation = page.getByRole('dialog');
     await expect(confirmation).toBeVisible();
     await expect(confirmation).toContainText(fixture.assignmentTitle);
