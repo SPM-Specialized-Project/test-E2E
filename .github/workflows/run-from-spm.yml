@@ -28,7 +28,7 @@ concurrency:
 jobs:
   e2e:
     name: Browser E2E
-    runs-on: [self-hosted, linux, x64, test-e2e-local]
+    runs-on: [self-hosted, windows, x64]
     timeout-minutes: 30
     env:
       CI: true
@@ -59,25 +59,28 @@ jobs:
           npx playwright install chromium
 
       - name: Verify target staging URL
-        shell: bash
+        shell: powershell
         env:
           TARGET_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.base_url || github.event.client_payload.base_url }}
         run: |
-          set -euo pipefail
+          $baseUrl = $env:TARGET_BASE_URL.TrimEnd('/')
+          if ([string]::IsNullOrWhiteSpace($baseUrl)) {
+            throw 'A staging URL is required.'
+          }
 
-          if [[ -z "${TARGET_BASE_URL:-}" ]]; then
-            echo '::error::A staging URL is required.'
-            exit 1
-          fi
+          foreach ($route in @('/api/health', '/login')) {
+            & curl.exe --fail --silent --show-error --retry 10 --retry-delay 2 "$baseUrl$route" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "Staging health check failed for $route."
+            }
+          }
 
-          base_url="${TARGET_BASE_URL%/}"
-          curl --fail --silent --show-error --retry 10 --retry-delay 2 \
-            "$base_url/api/health" >/dev/null
-          curl --fail --silent --show-error --retry 10 --retry-delay 2 \
-            "$base_url/login" >/dev/null
-
-          echo "BASE_URL=$base_url" >> "$GITHUB_ENV"
-          echo "API_BASE_URL=$base_url" >> "$GITHUB_ENV"
+          $environment = "BASE_URL=$baseUrl`nAPI_BASE_URL=$baseUrl`n"
+          [System.IO.File]::AppendAllText(
+            $env:GITHUB_ENV,
+            $environment,
+            [System.Text.UTF8Encoding]::new($false)
+          )
 
       - name: Run Playwright E2E
         run: npm test
