@@ -218,3 +218,11 @@ export async function getSubmissions(fixture: SubmissionFixture) {
   expect(response.status()).toBe(200);
   return (await response.json()).items as Array<Record<string, unknown>>;
 }
+
+export async function getWorkspaceSubmissions(fixture: SubmissionFixture) {
+  const response = await fixture.studentApi.get(
+    `/api/codepulse/workspaces/${encodeURIComponent(fixture.workspaceId)}/submissions`,
+  );
+  expect(response.status()).toBe(200);
+  return (await response.json()).items as Array<Record<string, unknown>>;
+}
