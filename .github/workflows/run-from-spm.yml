@@ -28,7 +28,7 @@ concurrency:
 jobs:
   e2e:
     name: Browser E2E
-    runs-on: [self-hosted, linux, x64, test-e2e-local]
+    runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 30
     env:
       CI: true
@@ -59,25 +59,37 @@ jobs:
           npx playwright install chromium
 
       - name: Verify target staging URL
-        shell: bash
+        shell: powershell
         env:
           TARGET_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.base_url || github.event.client_payload.base_url }}
         run: |
-          set -euo pipefail
-
-          if [[ -z "${TARGET_BASE_URL:-}" ]]; then
-            echo '::error::A staging URL is required.'
-            exit 1
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:TARGET_BASE_URL)) {
+            throw 'A staging URL is required.'
           fi
 
-          base_url="${TARGET_BASE_URL%/}"
-          curl --fail --silent --show-error --retry 10 --retry-delay 2 \
-            "$base_url/api/health" >/dev/null
-          curl --fail --silent --show-error --retry 10 --retry-delay 2 \
-            "$base_url/login" >/dev/null
+          $baseUrl = $env:TARGET_BASE_URL.TrimEnd('/')
+          foreach ($endpointPath in @('/api/health', '/login')) {
+            $uri = "$baseUrl$endpointPath"
+            for ($attempt = 1; $attempt -le 10; $attempt++) {
+              try {
+                $response = Invoke-WebRequest -Uri $uri -Method Get -TimeoutSec 20 -UseBasicParsing
+                if ($response.StatusCode -ge 400) {
+                  throw "HTTP $($response.StatusCode)"
+                }
+                break
+              } catch {
+                if ($attempt -eq 10) {
+                  throw "Staging endpoint did not become healthy: $uri. $($_.Exception.Message)"
+                }
+                Start-Sleep -Seconds 2
+              }
+            }
+          }
 
-          echo "BASE_URL=$base_url" >> "$GITHUB_ENV"
-          echo "API_BASE_URL=$base_url" >> "$GITHUB_ENV"
+          $environmentUpdates = "BASE_URL=$baseUrl`nAPI_BASE_URL=$baseUrl`n"
+          $utf8WithoutBom = [System.Text.UTF8Encoding]::new($false)
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, $environmentUpdates, $utf8WithoutBom)
 
       - name: Run Playwright E2E
         run: npm test
