@@ -123,6 +123,14 @@ async function login(
   return response.data.accessToken as string;
 }
 
+async function writeTermFixture(dataDirectory: string, termId: string): Promise<void> {
+  await writeFile(
+    path.join(dataDirectory, "codepulse-terms.json"),
+    `${JSON.stringify([{ id: termId, name: "US-012.3 test term" }], null, 2)}\n`,
+    "utf8",
+  );
+}
+
 test("AC-16a/16b: a 60-day-old submission, code and revealed hint remain readable after window close", async () => {
   const backend = await startBackend();
 
@@ -400,18 +408,279 @@ test("AC-16c partial: backup checksum and currently checked classroom/workspace 
   }
 });
 
-// TODO AC-16c: restore into a clean database and assert all records, foreign keys,
-// submission judgments/test results, snapshots, assignment versions and hints.
-test.todo(
-  "AC-16c: restoring a backup reproduces complete semester data and all relational links",
-);
+test("AC-16c: restoring a backup reproduces semester records and their links", async () => {
+  const backend = await startBackend();
 
-// Immutable CodePulse submissions are persisted in submissions.json, while the
-// current backup reads codepulse-submissions.json instead.
-test.todo(
-  "AC-16c: backup includes immutable CodePulse submissions from submissions.json",
-);
+  try {
+    const adminToken = await login(
+      backend.baseUrl,
+      "admin@gmail.com",
+      "admin123",
+    );
+    const collections: Record<string, unknown[]> = {
+      "codepulse-terms.json": [{ id: "term-restore", name: "Restore fixture" }],
+      "codepulse-classrooms.json": [
+        { id: "class-restore", termId: "term-restore" },
+      ],
+      "codepulse-assignments.json": [
+        { id: "assignment-restore", classroomId: "class-restore" },
+      ],
+      "codepulse-workspaces.json": [
+        {
+          id: "workspace-restore",
+          classroomId: "class-restore",
+          assignmentId: "assignment-restore",
+          hintProgress: [{ hintId: "hint-restore", revealedAt: "2026-01-01T00:00:00.000Z" }],
+        },
+      ],
+      "submissions.json": [
+        {
+          id: "submission-restore",
+          classroomId: "class-restore",
+          workspaceId: "workspace-restore",
+          assignmentId: "assignment-restore",
+          assignmentVersionId: "version-restore",
+          judgment: { id: "judgment-restore", passedCount: 1, totalCount: 1 },
+        },
+      ],
+      "codepulse-submissions.json": [],
+      "codepulse-alerts.json": [{ id: "alert-restore", classroomId: "class-restore" }],
+      "codepulse-memberships.json": [
+        { id: "membership-restore", classroomId: "class-restore", studentId: "student-restore" },
+      ],
+      "codepulse-labs.json": [{ id: "lab-restore", classroomId: "class-restore" }],
+      "codepulse-assignment-versions.json": [
+        { id: "version-restore", assignmentId: "assignment-restore", version: 1 },
+      ],
+      "codepulse-snapshots.json": [
+        { id: "snapshot-restore", workspaceId: "workspace-restore", revision: 1 },
+      ],
+      "codepulse-executions.json": [
+        { id: "execution-restore", workspaceId: "workspace-restore", submissionId: "submission-restore" },
+      ],
+      "codepulse-activities.json": [
+        { id: "activity-restore", classroomId: "class-restore", labId: "lab-restore" },
+      ],
+    };
 
-// Missing backup files currently fall through a success-shaped verification path.
-// Keep this as a TODO until verification returns failure instead of simulating success.
-test.todo("AC-16c: a missing or malformed backup must fail verification");
+    await Promise.all(
+      Object.entries(collections).map(([filename, records]) =>
+        writeFile(
+          path.join(backend.dataDirectory, filename),
+          `${JSON.stringify(records, null, 2)}\n`,
+          "utf8",
+        ),
+      ),
+    );
+
+    const created = await request(
+      backend.baseUrl,
+      "/api/admin/backups",
+      adminToken,
+      "POST",
+      { termId: "term-restore" },
+    );
+    assert.equal(created.status, 201);
+
+    for (const filename of Object.keys(collections)) {
+      await writeFile(
+        path.join(backend.dataDirectory, filename),
+        "[]\n",
+        "utf8",
+      );
+    }
+
+    const restored = await request(
+      backend.baseUrl,
+      `/api/admin/backups/${created.data.item.id}/restore`,
+      adminToken,
+      "POST",
+      {},
+    );
+    assert.equal(restored.status, 200);
+    assert.equal(restored.data.item.success, true);
+
+    for (const [filename, expectedRecords] of Object.entries(collections)) {
+      const actualRecords = JSON.parse(
+        await readFile(path.join(backend.dataDirectory, filename), "utf8"),
+      );
+      assert.deepEqual(actualRecords, expectedRecords, `${filename} should be restored`);
+    }
+
+    const submission = JSON.parse(
+      await readFile(
+        path.join(backend.dataDirectory, "submissions.json"),
+        "utf8",
+      ),
+    )[0];
+    assert.equal(submission.workspaceId, "workspace-restore");
+    assert.equal(submission.assignmentVersionId, "version-restore");
+    assert.equal(submission.judgment.id, "judgment-restore");
+  } finally {
+    await backend.stop();
+  }
+});
+
+test("AC-16c: backup includes immutable CodePulse submissions from submissions.json", async () => {
+  const backend = await startBackend();
+
+  try {
+    const adminToken = await login(
+      backend.baseUrl,
+      "admin@gmail.com",
+      "admin123",
+    );
+    const immutableSubmission = {
+      id: "immutable-submission-us0123",
+      classroomId: "class-us0123",
+      assignmentId: "assignment-us0123",
+      workspaceId: "workspace-us0123",
+      assignmentVersionId: "version-us0123",
+      sourceCode: "print('immutable')",
+      acceptedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    await Promise.all([
+      writeTermFixture(backend.dataDirectory, "term-us0123"),
+      writeFile(
+        path.join(backend.dataDirectory, "codepulse-classrooms.json"),
+        JSON.stringify([{ id: "class-us0123", termId: "term-us0123" }]),
+        "utf8",
+      ),
+      writeFile(
+        path.join(backend.dataDirectory, "codepulse-assignments.json"),
+        JSON.stringify([{ id: "assignment-us0123", classroomId: "class-us0123" }]),
+        "utf8",
+      ),
+      writeFile(
+        path.join(backend.dataDirectory, "codepulse-workspaces.json"),
+        JSON.stringify([{
+          id: "workspace-us0123",
+          classroomId: "class-us0123",
+          assignmentId: "assignment-us0123",
+        }]),
+        "utf8",
+      ),
+      writeFile(
+        path.join(backend.dataDirectory, "submissions.json"),
+        `${JSON.stringify([immutableSubmission], null, 2)}\n`,
+        "utf8",
+      ),
+      writeFile(
+        path.join(backend.dataDirectory, "codepulse-submissions.json"),
+        "[]\n",
+        "utf8",
+      ),
+    ]);
+
+    const created = await request(
+      backend.baseUrl,
+      "/api/admin/backups",
+      adminToken,
+      "POST",
+      { termId: "term-us0123" },
+    );
+    assert.equal(created.status, 201);
+
+    const backupPath = path.join(
+      backend.dataDirectory,
+      "backups",
+      created.data.item.filename,
+    );
+    const backupData = JSON.parse(await readFile(backupPath, "utf8")) as {
+      tables: { submissions: Array<Record<string, unknown>> };
+    };
+    assert.ok(
+      backupData.tables.submissions.some(
+        (submission) => submission.id === immutableSubmission.id,
+      ),
+      "Backup must include the immutable submission persisted in submissions.json",
+    );
+  } finally {
+    await backend.stop();
+  }
+});
+
+test("AC-16c: verification fails when a backup file is missing", async () => {
+  const backend = await startBackend();
+
+  try {
+    const adminToken = await login(
+      backend.baseUrl,
+      "admin@gmail.com",
+      "admin123",
+    );
+    await writeTermFixture(backend.dataDirectory, "term-us0123");
+    const created = await request(
+      backend.baseUrl,
+      "/api/admin/backups",
+      adminToken,
+      "POST",
+      { termId: "term-us0123" },
+    );
+    assert.equal(created.status, 201);
+
+    const backupPath = path.join(
+      backend.dataDirectory,
+      "backups",
+      created.data.item.filename,
+    );
+    await rm(backupPath);
+
+    const verification = await request(
+      backend.baseUrl,
+      `/api/admin/backups/${created.data.item.id}/verify`,
+      adminToken,
+      "POST",
+      {},
+    );
+    assert.equal(verification.status, 200);
+    assert.equal(verification.data.item.verified, false);
+    assert.equal(verification.data.item.checksumMatch, false);
+    assert.equal(verification.data.item.referentialIntegrity, false);
+  } finally {
+    await backend.stop();
+  }
+});
+
+test("AC-16c: verification fails when a backup file is malformed", async () => {
+  const backend = await startBackend();
+
+  try {
+    const adminToken = await login(
+      backend.baseUrl,
+      "admin@gmail.com",
+      "admin123",
+    );
+    await writeTermFixture(backend.dataDirectory, "term-us0123");
+    const created = await request(
+      backend.baseUrl,
+      "/api/admin/backups",
+      adminToken,
+      "POST",
+      { termId: "term-us0123" },
+    );
+    assert.equal(created.status, 201);
+
+    const backupPath = path.join(
+      backend.dataDirectory,
+      "backups",
+      created.data.item.filename,
+    );
+    await writeFile(backupPath, "{ malformed json", "utf8");
+
+    const verification = await request(
+      backend.baseUrl,
+      `/api/admin/backups/${created.data.item.id}/verify`,
+      adminToken,
+      "POST",
+      {},
+    );
+    assert.equal(verification.status, 200);
+    assert.equal(verification.data.item.verified, false);
+    assert.equal(verification.data.item.checksumMatch, false);
+    assert.equal(verification.data.item.referentialIntegrity, false);
+  } finally {
+    await backend.stop();
+  }
+});
