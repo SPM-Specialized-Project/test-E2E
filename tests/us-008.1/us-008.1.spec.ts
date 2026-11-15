@@ -76,6 +76,7 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
 
     const submission = (await response.json()).item as {
       id: string;
+      workspaceId: string;
       sourceCode: string;
       assignmentId: string;
       assignmentVersionId: string;
@@ -99,7 +100,17 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
     await expect(page.getByText(/Pending|Judging|GRADED/i)).toBeVisible();
     const submissionsBeforeEdit = await getWorkspaceSubmissions(fixture);
     const storedBeforeEdit = submissionsBeforeEdit.find((item) => item.id === submission.id);
-    expect(storedBeforeEdit?.sourceCode).toBe(submittedSource);
+    const immutableSnapshot = {
+      id: submission.id,
+      workspaceId: fixture.workspaceId,
+      sourceCode: submittedSource,
+      assignmentId: fixture.assignmentId,
+      assignmentVersionId: fixture.assignmentVersionId,
+      assignmentVersion: submission.assignmentVersion,
+      student: submission.student,
+      acceptedAt: submission.acceptedAt,
+    };
+    expect(storedBeforeEdit).toMatchObject(immutableSnapshot);
 
     const changedSource = 'print("workspace changed after submission")';
     await replaceEditorCode(page, changedSource);
@@ -114,9 +125,9 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
     }).toBe(changedSource);
 
     const submissionsAfterEdit = await getWorkspaceSubmissions(fixture);
+    expect(submissionsAfterEdit).toHaveLength(submissionsBeforeEdit.length);
     const storedAfterEdit = submissionsAfterEdit.find((item) => item.id === submission.id);
-    expect(storedAfterEdit).toEqual(storedBeforeEdit);
-    expect(storedAfterEdit?.sourceCode).toBe(submittedSource);
+    expect(storedAfterEdit).toMatchObject(immutableSnapshot);
   });
 
   test('same requestKey and payload returns the original submission without increasing history', async () => {
