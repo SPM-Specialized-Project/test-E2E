@@ -162,15 +162,15 @@ export async function openStudentWorkspace(page: Page) {
   await expect(page).toHaveURL(/\/dashboard\/?$/);
   await page.goto('/course/13#terms');
   await expect(page.getByRole('heading', { name: 'Problem workspace' })).toBeVisible();
-  await expect(page.locator('.monaco-editor').first()).toBeVisible();
+  const sourceEditor = page.getByRole('textbox', { name: 'Source code' });
+  await expect(sourceEditor).toBeVisible();
+  await expect(sourceEditor).toBeEnabled();
 }
 
 export async function replaceEditorCode(page: Page, sourceCode: string) {
-  const editor = page.locator('.monaco-editor').first();
-  await editor.click();
-  await page.keyboard.press('Control+A');
-  await page.keyboard.insertText(sourceCode);
-  await expect(editor.locator('.view-lines')).toContainText(sourceCode);
+  const editor = page.getByRole('textbox', { name: 'Source code' });
+  await editor.fill(sourceCode);
+  await expect(editor).toHaveValue(sourceCode);
 }
 
 export async function getWorkspace(

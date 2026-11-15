@@ -104,9 +104,8 @@ test.describe('US-006.2 - Run snapshots and conflict handling', () => {
 
       await conflictDialog.getByRole('button', { name: /close|dismiss|cancel|đóng|hủy/i }).click();
       await expect(conflictDialog).toBeHidden();
-      await expect(secondPage.locator('.monaco-editor .view-lines')).toContainText(
-        uncommittedCode,
-      );
+      await expect(secondPage.getByRole('textbox', { name: 'Source code' }))
+        .toHaveValue(uncommittedCode);
     } finally {
       await secondContext.close();
     }

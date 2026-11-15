@@ -36,12 +36,12 @@ jobs:
       SPM_E2E_BACKEND_ROOT: ${{ github.workspace }}/spm/backend
     steps:
       - name: Checkout E2E tests
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
       - name: Checkout application backend for the log check
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: SPM-Specialized-Project/SPM-frontend
           ref: ${{ github.event.client_payload.app_sha || inputs.app_ref || 'staging' }}
@@ -49,7 +49,7 @@ jobs:
           fetch-depth: 1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -137,7 +137,7 @@ jobs:
 
       - name: Upload E2E artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: spm-e2e-${{ github.run_id }}
           if-no-files-found: ignore

@@ -41,12 +41,9 @@ test.describe('US-006.1 - Autosave mechanics and recovery', () => {
     });
 
     const sourceCode = 'print("debounced autosave")';
-    const editor = page.locator('.monaco-editor').first();
-    await editor.click();
-    await page.keyboard.press('Control+A');
-    for (const character of sourceCode) {
-      await page.keyboard.type(character, { delay: 5 });
-    }
+    const editor = page.getByRole('textbox', { name: 'Source code' });
+    await editor.fill('');
+    await editor.pressSequentially(sourceCode, { delay: 5 });
 
     await expect.poll(() => saveRequests, { timeout: 10_000 }).toBe(1);
     await expect(page.locator('[aria-live="polite"]').first()).toContainText(/Saved|Đã lưu/i);
@@ -64,10 +61,9 @@ test.describe('US-006.1 - Autosave mechanics and recovery', () => {
     const sourceCode = 'print("keep this while offline")';
 
     await page.context().setOffline(true);
-    await page.locator('.monaco-editor').first().click();
-    await page.keyboard.press('Control+A');
-    await page.keyboard.insertText(sourceCode);
-    await expect(page.locator('.monaco-editor .view-lines')).toContainText(sourceCode);
+    const editor = page.getByRole('textbox', { name: 'Source code' });
+    await editor.fill(sourceCode);
+    await expect(editor).toHaveValue(sourceCode);
 
     await page.context().setOffline(false);
     await expect(page.locator('[aria-live="polite"]').first()).toContainText(
