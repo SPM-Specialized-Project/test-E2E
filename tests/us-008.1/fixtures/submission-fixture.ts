@@ -21,6 +21,7 @@ export type SubmissionFixture = {
   studentApi: APIRequestContext;
   lecturerApi: APIRequestContext;
   labId: string;
+  labName: string;
   labAssignmentId: string;
   assignmentId: string;
   assignmentVersionId: string;
@@ -79,13 +80,14 @@ export async function createSubmissionFixture(): Promise<SubmissionFixture> {
       title: string;
     };
 
+    const labName = `US-008.1 submissions ${Date.now()}`;
     const openAt = new Date(Date.now() - 60_000).toISOString();
     const closeAt = new Date(Date.now() + 60 * 60_000).toISOString();
     const createResponse = await lecturerApi.post(
       `/api/codepulse/classrooms/${classroomId}/labs`,
       {
         data: {
-          name: `US-008.1 submissions ${Date.now()}`,
+          name: labName,
           description: 'Temporary LAB for submission acceptance tests.',
           startAt: openAt,
           endAt: closeAt,
@@ -156,6 +158,7 @@ export async function createSubmissionFixture(): Promise<SubmissionFixture> {
       studentApi,
       lecturerApi,
       labId,
+      labName,
       labAssignmentId: studentAssignment!.id,
       assignmentId: studentAssignment!.assignmentId,
       assignmentVersionId: studentAssignment!.assignmentVersionId,
@@ -182,7 +185,7 @@ export async function createSubmissionFixture(): Promise<SubmissionFixture> {
   }
 }
 
-export async function openStudentWorkspace(page: Page) {
+export async function openStudentWorkspace(page: Page, labName: string) {
   await page.goto('/login');
   await page.locator('#email').fill(studentCredentials.email);
   await page.locator('#password').fill(studentCredentials.password);
@@ -191,6 +194,19 @@ export async function openStudentWorkspace(page: Page) {
   await page.goto('/course/13#terms');
   await expect(page.getByRole('heading', { name: 'Problem workspace' })).toBeVisible();
   await expect(page.locator('.monaco-editor').first()).toBeVisible();
+
+  const labGroup = page
+    .getByRole('navigation', { name: 'LAB problems' })
+    .getByText(labName, { exact: true })
+    .locator('xpath=../..');
+  const labAssignmentButton = labGroup.getByRole('button');
+  await expect(labAssignmentButton).toHaveCount(1);
+  await labAssignmentButton.click();
+  await expect(
+    page
+      .getByRole('region', { name: 'Student code workspace' })
+      .getByRole('button', { name: 'Official submit' }),
+  ).toBeEnabled();
 }
 
 export async function replaceEditorCode(page: Page, sourceCode: string) {
