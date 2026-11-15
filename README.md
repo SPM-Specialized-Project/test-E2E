@@ -66,10 +66,11 @@ membership and LAB mutations.
 The `SPM-frontend` repository sends a `repository_dispatch` event containing
 the exact application commit and staging URL to test. This repository checks
 out the E2E suite and checks out that application commit into `spm/`, then
-runs against the supplied host on its Debian self-hosted runner with label
-`test-e2e-local`. This staging workflow enables remote writes for fixture
-preparation and the mutation tests. Manual dispatch accepts an `app_ref`
-alongside the staging URL; it defaults to `staging`.
+runs against the supplied host on the `TUNGQUAN` Windows self-hosted runner
+with the default `self-hosted`, `Windows`, and `X64` labels. This staging
+workflow enables remote writes for fixture preparation and the mutation
+tests. Manual dispatch accepts an `app_ref` alongside the staging URL; it
+defaults to `staging`.
 
 The caller workflow polls this run and exposes the result as the
 `E2E (test-E2E runner)` required status check on the `staging -> main` pull

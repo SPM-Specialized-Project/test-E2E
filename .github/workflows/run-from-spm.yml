@@ -28,7 +28,7 @@ concurrency:
 jobs:
   e2e:
     name: Browser E2E
-    runs-on: [self-hosted, windows, x64]
+    runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 30
     env:
       CI: true
@@ -63,13 +63,14 @@ jobs:
         env:
           TARGET_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.base_url || github.event.client_payload.base_url }}
         run: |
-          $baseUrl = $env:TARGET_BASE_URL.TrimEnd('/')
-          if ([string]::IsNullOrWhiteSpace($baseUrl)) {
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:TARGET_BASE_URL)) {
             throw 'A staging URL is required.'
           }
+          $baseUrl = $env:TARGET_BASE_URL.TrimEnd('/')
 
           foreach ($route in @('/api/health', '/login')) {
-            & curl.exe --fail --silent --show-error --retry 10 --retry-delay 2 "$baseUrl$route" | Out-Null
+            & curl.exe --fail --silent --show-error --retry 10 --retry-delay 2 --connect-timeout 10 --max-time 30 "$baseUrl$route" | Out-Null
             if ($LASTEXITCODE -ne 0) {
               throw "Staging health check failed for $route."
             }
