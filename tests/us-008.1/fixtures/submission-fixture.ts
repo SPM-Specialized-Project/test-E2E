@@ -198,7 +198,7 @@ export async function openStudentWorkspace(page: Page, labName: string) {
   const labGroup = page
     .getByRole('navigation', { name: 'LAB problems' })
     .getByText(labName, { exact: true })
-    .locator('xpath=../..');
+    .locator('xpath=..');
   const labAssignmentButton = labGroup.getByRole('button');
   await expect(labAssignmentButton).toHaveCount(1);
   await labAssignmentButton.click();
