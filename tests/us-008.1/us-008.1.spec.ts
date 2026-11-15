@@ -6,7 +6,6 @@ import {
 } from '../fixtures/target-host';
 import {
   createSubmissionFixture,
-  getSubmissions,
   getWorkspace,
   getWorkspaceSubmissions,
   openStudentWorkspace,
@@ -92,8 +91,10 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
     expect(submission.student.email).toBe('student@gmail.com');
     expect(submission.acceptedAt).toBeTruthy();
     const acceptedAt = Date.parse(submission.acceptedAt);
-    expect(acceptedAt).toBeGreaterThanOrEqual(acceptedRequestAt);
-    expect(acceptedAt).toBeLessThanOrEqual(responseReceivedAt);
+    // The staging API and Windows runner can have slightly different clocks.
+    const clockSkewToleranceMs = 5_000;
+    expect(acceptedAt).toBeGreaterThanOrEqual(acceptedRequestAt - clockSkewToleranceMs);
+    expect(acceptedAt).toBeLessThanOrEqual(responseReceivedAt + clockSkewToleranceMs);
 
     await expect(page.getByText(/Pending|Judging|GRADED/i)).toBeVisible();
     const submissionsBeforeEdit = await getWorkspaceSubmissions(fixture);
@@ -115,32 +116,41 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
     expect(storedAfterEdit?.sourceCode).toBe(submittedSource);
   });
 
-  test('same request_key and payload returns the original submission without increasing history', async () => {
+  test('same requestKey and payload returns the original submission without increasing history', async () => {
     const requestKey = `us-008.1-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const sourceCode = 'print("idempotent submission")';
-    const route = `/api/codepulse/classrooms/class-1/labs/${encodeURIComponent(fixture.labId)}/assignments/${encodeURIComponent(fixture.labAssignmentId)}/submit`;
-    const initialHistory = await getSubmissions(fixture);
+    const route = `/api/codepulse/workspaces/${encodeURIComponent(fixture.workspaceId)}/submissions`;
+    const initialHistory = await getWorkspaceSubmissions(fixture);
+    const payload = {
+      sourceCode,
+      assignmentVersionId: fixture.assignmentVersionId,
+      requestKey,
+    };
 
     const firstResponse = await fixture.studentApi.post(route, {
-      data: { sourceCode, request_key: requestKey },
+      data: payload,
     });
     expect(firstResponse.status()).toBe(201);
-    const firstSubmission = (await firstResponse.json()).item as {
+    const firstResult = await firstResponse.json();
+    expect(firstResult.created).toBe(true);
+    const firstSubmission = firstResult.item as {
       id: string;
       sourceCode: string;
       acceptedAt: string;
     };
 
     const retryResponse = await fixture.studentApi.post(route, {
-      data: { sourceCode, request_key: requestKey },
+      data: payload,
     });
-    expect(retryResponse.status()).toBe(201);
-    const retriedSubmission = (await retryResponse.json()).item as typeof firstSubmission;
+    expect(retryResponse.status()).toBe(200);
+    const retryResult = await retryResponse.json();
+    expect(retryResult.created).toBe(false);
+    const retriedSubmission = retryResult.item as typeof firstSubmission;
     expect(retriedSubmission.id).toBe(firstSubmission.id);
     expect(retriedSubmission.sourceCode).toBe(firstSubmission.sourceCode);
     expect(retriedSubmission.acceptedAt).toBe(firstSubmission.acceptedAt);
 
-    const finalHistory = await getSubmissions(fixture);
+    const finalHistory = await getWorkspaceSubmissions(fixture);
     expect(finalHistory).toHaveLength(initialHistory.length + 1);
     expect(finalHistory.filter((item) => item.id === firstSubmission.id)).toHaveLength(1);
   });
