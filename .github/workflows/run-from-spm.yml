@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   e2e:
-    name: Browser E2E
+    name: Full E2E and Unit Tests
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 30
     env:
@@ -51,12 +51,19 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install E2E dependencies and browser
         run: |
           npm ci
           npx playwright install chromium
+
+      - name: Install frontend native-test dependencies
+        run: npm ci --prefix spm/frontend
+
+      - name: Stage Node and Vitest suites
+        shell: powershell
+        run: .\scripts\stage-native-tests.ps1
 
       - name: Verify target staging URL
         shell: powershell
@@ -84,7 +91,49 @@ jobs:
           )
 
       - name: Run Playwright E2E
+        id: playwright
+        continue-on-error: true
         run: npm test
+
+      - name: Run frontend Vitest suites
+        id: frontend_vitest
+        continue-on-error: true
+        working-directory: spm/frontend
+        run: .\node_modules\.bin\vitest.cmd run tests\run-code-sandbox tests\US-007.2
+
+      - name: Run backend Node test suites
+        id: backend_node
+        continue-on-error: true
+        working-directory: spm
+        run: node --test backend/test/us-008.2/us-008.2.spec.ts tests/us-009.1/issue-detection.spec.ts tests/US-012.4/semester-reset.spec.ts
+
+      - name: Run backend Vitest suites
+        id: backend_vitest
+        continue-on-error: true
+        working-directory: spm
+        run: .\frontend\node_modules\.bin\vitest.cmd run --root . tests\US-012.2-admin-operations\admin-operations.spec.ts tests\us-012-3\retention-backup.spec.ts
+
+      - name: Summarize full test suite result
+        if: always()
+        shell: powershell
+        env:
+          PLAYWRIGHT_OUTCOME: ${{ steps.playwright.outcome }}
+          FRONTEND_VITEST_OUTCOME: ${{ steps.frontend_vitest.outcome }}
+          BACKEND_NODE_OUTCOME: ${{ steps.backend_node.outcome }}
+          BACKEND_VITEST_OUTCOME: ${{ steps.backend_vitest.outcome }}
+        run: |
+          $failed = @()
+          foreach ($suite in @(
+            @{ Name = 'Playwright E2E'; Outcome = $env:PLAYWRIGHT_OUTCOME },
+            @{ Name = 'Frontend Vitest'; Outcome = $env:FRONTEND_VITEST_OUTCOME },
+            @{ Name = 'Backend Node'; Outcome = $env:BACKEND_NODE_OUTCOME },
+            @{ Name = 'Backend Vitest'; Outcome = $env:BACKEND_VITEST_OUTCOME }
+          )) {
+            if ($suite.Outcome -ne 'success') { $failed += "$($suite.Name): $($suite.Outcome)" }
+          }
+          if ($failed.Count -gt 0) {
+            throw "One or more full-suite groups failed: $($failed -join '; ')"
+          }
 
       - name: Upload E2E artifacts
         if: always()
