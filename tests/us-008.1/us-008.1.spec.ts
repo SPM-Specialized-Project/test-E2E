@@ -32,7 +32,7 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
 
   test('submits the exact editor code and preserves that snapshot after workspace edits', async ({ page }) => {
     test.setTimeout(60_000);
-    await openStudentWorkspace(page, fixture.labName);
+    await openStudentWorkspace(page, fixture.problemIndex);
     const submittedSource = 'print("official submission snapshot")';
     await replaceEditorCode(page, submittedSource);
 

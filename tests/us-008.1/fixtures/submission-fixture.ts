@@ -21,8 +21,8 @@ export type SubmissionFixture = {
   studentApi: APIRequestContext;
   lecturerApi: APIRequestContext;
   labId: string;
-  labName: string;
   labAssignmentId: string;
+  problemIndex: number;
   assignmentId: string;
   assignmentVersionId: string;
   workspaceId: string;
@@ -138,6 +138,19 @@ export async function createSubmissionFixture(): Promise<SubmissionFixture> {
     );
     expect(studentAssignment?.workspaceId, 'Student workspace was not created').toBeTruthy();
 
+    const assignmentsResponse = await studentApi.get(
+      `/api/codepulse/classrooms/${classroomId}/assignments?view=student`,
+    );
+    expect(assignmentsResponse.status()).toBe(200);
+    const visibleAssignmentIds = new Set(
+      ((await assignmentsResponse.json()).items as Array<{ id: string }>).map((item) => item.id),
+    );
+    const problemIndex = labs
+      .flatMap((item) => item.assignments)
+      .filter((item) => visibleAssignmentIds.has(item.assignmentId))
+      .findIndex((item) => item.id === studentAssignment!.id);
+    expect(problemIndex, 'Fixture LAB assignment is not visible in the student problem workspace').toBeGreaterThanOrEqual(0);
+
     const cleanup = async () => {
       try {
         if (labId && labStateVersion !== undefined && lecturerApi) {
@@ -158,8 +171,8 @@ export async function createSubmissionFixture(): Promise<SubmissionFixture> {
       studentApi,
       lecturerApi,
       labId,
-      labName,
       labAssignmentId: studentAssignment!.id,
+      problemIndex,
       assignmentId: studentAssignment!.assignmentId,
       assignmentVersionId: studentAssignment!.assignmentVersionId,
       workspaceId: studentAssignment!.workspaceId,
@@ -185,7 +198,7 @@ export async function createSubmissionFixture(): Promise<SubmissionFixture> {
   }
 }
 
-export async function openStudentWorkspace(page: Page, labName: string) {
+export async function openStudentWorkspace(page: Page, problemIndex: number) {
   await page.goto('/login');
   await page.locator('#email').fill(studentCredentials.email);
   await page.locator('#password').fill(studentCredentials.password);
@@ -195,13 +208,12 @@ export async function openStudentWorkspace(page: Page, labName: string) {
   await expect(page.getByRole('heading', { name: 'Problem workspace' })).toBeVisible();
   await expect(page.locator('.monaco-editor').first()).toBeVisible();
 
-  const labGroup = page
-    .getByRole('navigation', { name: 'LAB problems' })
-    .getByText(labName, { exact: true })
-    .locator('xpath=..');
-  const labAssignmentButton = labGroup.getByRole('button');
-  await expect(labAssignmentButton).toHaveCount(1);
-  await labAssignmentButton.click();
+  const problemSelector = page.getByRole('combobox', { name: 'Chọn bài tập' });
+  if (await problemSelector.count()) {
+    await problemSelector.selectOption(String(problemIndex));
+  } else {
+    expect(problemIndex).toBe(0);
+  }
   await expect(
     page
       .getByRole('region', { name: 'Student code workspace' })
