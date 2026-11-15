@@ -66,30 +66,22 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if ([string]::IsNullOrWhiteSpace($env:TARGET_BASE_URL)) {
             throw 'A staging URL is required.'
-          fi
-
+          }
           $baseUrl = $env:TARGET_BASE_URL.TrimEnd('/')
-          foreach ($endpointPath in @('/api/health', '/login')) {
-            $uri = "$baseUrl$endpointPath"
-            for ($attempt = 1; $attempt -le 10; $attempt++) {
-              try {
-                $response = Invoke-WebRequest -Uri $uri -Method Get -TimeoutSec 20 -UseBasicParsing
-                if ($response.StatusCode -ge 400) {
-                  throw "HTTP $($response.StatusCode)"
-                }
-                break
-              } catch {
-                if ($attempt -eq 10) {
-                  throw "Staging endpoint did not become healthy: $uri. $($_.Exception.Message)"
-                }
-                Start-Sleep -Seconds 2
-              }
+
+          foreach ($route in @('/api/health', '/login')) {
+            & curl.exe --fail --silent --show-error --retry 10 --retry-delay 2 --connect-timeout 10 --max-time 30 "$baseUrl$route" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "Staging health check failed for $route."
             }
           }
 
-          $environmentUpdates = "BASE_URL=$baseUrl`nAPI_BASE_URL=$baseUrl`n"
-          $utf8WithoutBom = [System.Text.UTF8Encoding]::new($false)
-          [System.IO.File]::AppendAllText($env:GITHUB_ENV, $environmentUpdates, $utf8WithoutBom)
+          $environment = "BASE_URL=$baseUrl`nAPI_BASE_URL=$baseUrl`n"
+          [System.IO.File]::AppendAllText(
+            $env:GITHUB_ENV,
+            $environment,
+            [System.Text.UTF8Encoding]::new($false)
+          )
 
       - name: Run Playwright E2E
         run: npm test

@@ -22,6 +22,7 @@ export type SubmissionFixture = {
   lecturerApi: APIRequestContext;
   labId: string;
   labAssignmentId: string;
+  problemIndex: number;
   assignmentId: string;
   assignmentVersionId: string;
   workspaceId: string;
@@ -79,13 +80,14 @@ export async function createSubmissionFixture(): Promise<SubmissionFixture> {
       title: string;
     };
 
+    const labName = `US-008.1 submissions ${Date.now()}`;
     const openAt = new Date(Date.now() - 60_000).toISOString();
     const closeAt = new Date(Date.now() + 60 * 60_000).toISOString();
     const createResponse = await lecturerApi.post(
       `/api/codepulse/classrooms/${classroomId}/labs`,
       {
         data: {
-          name: `US-008.1 submissions ${Date.now()}`,
+          name: labName,
           description: 'Temporary LAB for submission acceptance tests.',
           startAt: openAt,
           endAt: closeAt,
@@ -136,6 +138,19 @@ export async function createSubmissionFixture(): Promise<SubmissionFixture> {
     );
     expect(studentAssignment?.workspaceId, 'Student workspace was not created').toBeTruthy();
 
+    const assignmentsResponse = await studentApi.get(
+      `/api/codepulse/classrooms/${classroomId}/assignments?view=student`,
+    );
+    expect(assignmentsResponse.status()).toBe(200);
+    const visibleAssignmentIds = new Set(
+      ((await assignmentsResponse.json()).items as Array<{ id: string }>).map((item) => item.id),
+    );
+    const problemIndex = labs
+      .flatMap((item) => item.assignments)
+      .filter((item) => visibleAssignmentIds.has(item.assignmentId))
+      .findIndex((item) => item.id === studentAssignment!.id);
+    expect(problemIndex, 'Fixture LAB assignment is not visible in the student problem workspace').toBeGreaterThanOrEqual(0);
+
     const cleanup = async () => {
       try {
         if (labId && labStateVersion !== undefined && lecturerApi) {
@@ -157,6 +172,7 @@ export async function createSubmissionFixture(): Promise<SubmissionFixture> {
       lecturerApi,
       labId,
       labAssignmentId: studentAssignment!.id,
+      problemIndex,
       assignmentId: studentAssignment!.assignmentId,
       assignmentVersionId: studentAssignment!.assignmentVersionId,
       workspaceId: studentAssignment!.workspaceId,
@@ -182,7 +198,7 @@ export async function createSubmissionFixture(): Promise<SubmissionFixture> {
   }
 }
 
-export async function openStudentWorkspace(page: Page) {
+export async function openStudentWorkspace(page: Page, problemIndex: number) {
   await page.goto('/login');
   await page.locator('#email').fill(studentCredentials.email);
   await page.locator('#password').fill(studentCredentials.password);
@@ -191,6 +207,18 @@ export async function openStudentWorkspace(page: Page) {
   await page.goto('/course/13#terms');
   await expect(page.getByRole('heading', { name: 'Problem workspace' })).toBeVisible();
   await expect(page.locator('.monaco-editor').first()).toBeVisible();
+
+  const problemSelector = page.getByRole('combobox', { name: 'Chọn bài tập' });
+  if (await problemSelector.count()) {
+    await problemSelector.selectOption(String(problemIndex));
+  } else {
+    expect(problemIndex).toBe(0);
+  }
+  await expect(
+    page
+      .getByRole('region', { name: 'Student code workspace' })
+      .getByRole('button', { name: 'Official submit' }),
+  ).toBeEnabled();
 }
 
 export async function replaceEditorCode(page: Page, sourceCode: string) {
@@ -214,6 +242,14 @@ export async function getWorkspace(
 export async function getSubmissions(fixture: SubmissionFixture) {
   const response = await fixture.studentApi.get(
     `/api/codepulse/classrooms/${classroomId}/labs/${encodeURIComponent(fixture.labId)}/assignments/${encodeURIComponent(fixture.labAssignmentId)}/submissions`,
+  );
+  expect(response.status()).toBe(200);
+  return (await response.json()).items as Array<Record<string, unknown>>;
+}
+
+export async function getWorkspaceSubmissions(fixture: SubmissionFixture) {
+  const response = await fixture.studentApi.get(
+    `/api/codepulse/workspaces/${encodeURIComponent(fixture.workspaceId)}/submissions`,
   );
   expect(response.status()).toBe(200);
   return (await response.json()).items as Array<Record<string, unknown>>;
