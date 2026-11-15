@@ -108,7 +108,10 @@ test.describe.serial('US-008.1 - Immutable official submissions', () => {
       /Đã lưu|Saved/i,
       { timeout: 10_000 },
     );
-    expect((await getWorkspace(fixture)).sourceCode).toBe(changedSource);
+    await expect.poll(async () => (await getWorkspace(fixture)).sourceCode, {
+      message: 'Workspace code should be persisted after saving',
+      timeout: 10_000,
+    }).toBe(changedSource);
 
     const submissionsAfterEdit = await getWorkspaceSubmissions(fixture);
     const storedAfterEdit = submissionsAfterEdit.find((item) => item.id === submission.id);
