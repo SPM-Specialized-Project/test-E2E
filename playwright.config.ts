@@ -2,20 +2,21 @@ import { defineConfig, devices } from "@playwright/test";
 
 import { appBaseURL, isRemoteHost } from './tests/fixtures/target-host';
 
+const browserTests = [
+  'staging-smoke.spec.ts',
+  'us-001.1.spec.ts',
+  'us-001.2.spec.ts',
+  'us-002.1.spec.ts',
+  'us-002.2.spec.ts',
+  'us-003.2/us-003.2.spec.ts',
+  'us-005.1/us-005.1.spec.ts',
+  'us-006/**/*.spec.ts',
+  'us-008.1/us-008.1.spec.ts',
+];
+
 export default defineConfig({
   testDir: "./tests",
-  testIgnore: [
-    ...(process.env.RUN_US006 === 'true' ? [] : ['**/us-006/**']),
-    // These Node/Vitest suites use their own runners and are not browser E2E specs.
-    '**/US-007.1/execution-verdicts.spec.ts',
-    '**/US-007.1/sandbox-isolation.spec.ts',
-    '**/US-007.2/us-007.2.spec.ts',
-    '**/us-008.2/us-008.2.spec.ts',
-    '**/us-009.1/issue-detection.spec.ts',
-    '**/us-012-3/retention-backup.spec.ts',
-    '**/US-012.2/admin-operations.spec.ts',
-    '**/US-012.4/semester-reset.spec.ts',
-  ],
+  testMatch: browserTests,
   globalSetup: './tests/fixtures/prepare-staging.ts',
   timeout: 30_000,
   expect: {

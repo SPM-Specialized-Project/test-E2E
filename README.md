@@ -30,8 +30,9 @@ npx playwright install chromium
 npm test
 ```
 
-US-006 is temporarily excluded by the root config. Set `RUN_US006=true` to
-include it again. The default suite contains 27 tests.
+The browser suite includes US-006, which exercises unfinished autosave,
+recovery, snapshot, and conflict behavior and is expected to report failures
+until those product behaviors are implemented.
 
 The password-log check runs a separate copy of the application backend with
 a temporary data directory and an automatically assigned port. Set
@@ -71,6 +72,11 @@ with the default `self-hosted`, `Windows`, and `X64` labels. This staging
 workflow enables remote writes for fixture preparation and the mutation
 tests. Manual dispatch accepts an `app_ref` alongside the staging URL; it
 defaults to `staging`.
+
+The full Windows workflow runs the Playwright browser suite, frontend Vitest
+suites, backend Node suites, and backend Vitest suites. It lets every group
+finish, then fails the job if any group fails. Native-runner specs are staged
+into the checked-out SPM source tree so their relative imports resolve.
 
 The caller workflow polls this run and exposes the result as the
 `E2E (test-E2E runner)` required status check on the `staging -> main` pull
