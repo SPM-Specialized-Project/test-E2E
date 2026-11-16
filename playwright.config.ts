@@ -4,7 +4,18 @@ import { appBaseURL, isRemoteHost } from './tests/fixtures/target-host';
 
 export default defineConfig({
   testDir: "./tests",
-  testIgnore: process.env.RUN_US006 === 'true' ? [] : ['**/us-006/**'],
+  testIgnore: [
+    ...(process.env.RUN_US006 === 'true' ? [] : ['**/us-006/**']),
+    // These Node/Vitest suites use their own runners and are not browser E2E specs.
+    '**/US-007.1/execution-verdicts.spec.ts',
+    '**/US-007.1/sandbox-isolation.spec.ts',
+    '**/US-007.2/us-007.2.spec.ts',
+    '**/us-008.2/us-008.2.spec.ts',
+    '**/us-009.1/issue-detection.spec.ts',
+    '**/us-012-3/retention-backup.spec.ts',
+    '**/US-012.2/admin-operations.spec.ts',
+    '**/US-012.4/semester-reset.spec.ts',
+  ],
   globalSetup: './tests/fixtures/prepare-staging.ts',
   timeout: 30_000,
   expect: {
