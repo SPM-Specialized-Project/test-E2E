@@ -1,22 +1,52 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const backendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'backend');
+const backendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'backend');
 const termId = 'term-2026-1';
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-async function startBackend(t) {
+async function startBackend(t, { failCompletionAuditWrite = false } = {}) {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), 'spm-us0124-'));
-  const server = spawn(process.execPath, ['server.mjs'], {
+  const args = [];
+  if (failCompletionAuditWrite) {
+    const preloadFile = path.join(dataDirectory, 'fail-reset-completion-write.mjs');
+    await writeFile(preloadFile, `
+import fs from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+import path from 'node:path';
+
+const auditFile = path.join(process.env.BACKEND_DATA_DIRECTORY, 'codepulse-reset-records.json');
+const originalRename = fs.promises.rename;
+let injected = false;
+fs.promises.rename = async (source, destination) => {
+  if (!injected && path.resolve(destination) === auditFile) {
+    const records = JSON.parse(await readFile(source, 'utf8'));
+    if (records.some((record) => record.status === 'COMPLETE')) {
+      injected = true;
+      const error = new Error('Injected reset completion audit write failure.');
+      error.code = 'EIO';
+      throw error;
+    }
+  }
+  return originalRename(source, destination);
+};
+syncBuiltinESMExports();
+`, 'utf8');
+    args.push('--import', pathToFileURL(preloadFile).href);
+  }
+  const server = spawn(process.execPath, [...args, 'server.mjs'], {
     cwd: backendDirectory,
     env: { ...process.env, BACKEND_PORT: '0', BACKEND_DATA_DIRECTORY: dataDirectory },
-    stdio: ['ignore', 'pipe', 'ignore'],
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  let backendStderr = '';
+  server.stderr.on('data', (chunk) => { backendStderr += chunk.toString(); });
   t.after(async () => {
     if (server.exitCode === null) {
       server.kill();
@@ -33,7 +63,7 @@ async function startBackend(t) {
     });
     server.once('exit', (code) => {
       clearTimeout(timeout);
-      reject(new Error(`Backend exited before startup: ${code}`));
+      reject(new Error(`Backend exited before startup: ${code}\n${backendStderr}`));
     });
     server.stdout.on('data', (chunk) => {
       const match = chunk.toString().match(/localhost:(\d+)/);
@@ -180,10 +210,38 @@ test('AC-16e/f: purge is reconciled, audited and retains reusable assignment ver
   assert.ok(acknowledgement.data.item.acknowledgements.some((item) => item.acknowledgedBy === 'lecturer@gmail.com'));
 });
 
-test.todo('AC-16e: keep the term incomplete and record an error if COMPLETE ResetRecord persistence fails');
+test('AC-16e: keep the term incomplete and record an error if COMPLETE ResetRecord persistence fails', async (t) => {
+  const { baseUrl, dataDirectory } = await startBackend(t, { failCompletionAuditWrite: true });
+  const admin = await login(baseUrl, 'admin@gmail.com', 'admin123');
+
+  await confirmBoundaryAndEndTerm(baseUrl, admin);
+  const started = await request(baseUrl, `/codepulse/terms/${termId}/reset/start`, admin, 'POST');
+  assert.equal(started.status, 200);
+
+  const failedExecution = await request(baseUrl, `/codepulse/terms/${termId}/reset/execute`, admin, 'POST');
+  assert.equal(failedExecution.status, 500);
+  assert.equal(failedExecution.data.code, 'TERM_RESET_INCOMPLETE');
+  assert.match(failedExecution.data.details.auditError, /Injected reset completion audit write failure/);
+
+  const termAfterFailure = JSON.parse(await readFile(path.join(dataDirectory, 'codepulse-terms.json'), 'utf8'))
+    .find((item) => item.id === termId);
+  assert.equal(termAfterFailure.status, 'RESETTING');
+  assert.equal(termAfterFailure.resetCompletedAt, undefined);
+
+  const recordsAfterFailure = JSON.parse(await readFile(path.join(dataDirectory, 'codepulse-reset-records.json'), 'utf8'));
+  assert.equal(recordsAfterFailure.length, 1);
+  assert.equal(recordsAfterFailure[0].status, 'INCOMPLETE');
+  assert.match(recordsAfterFailure[0].errors[0], /Unable to persist reset completion audit/);
+  assert.match(recordsAfterFailure[0].errors[0], /Injected reset completion audit write failure/);
+
+  const retriedExecution = await request(baseUrl, `/codepulse/terms/${termId}/reset/execute`, admin, 'POST');
+  assert.equal(retriedExecution.status, 200);
+  assert.equal(retriedExecution.data.item.status, 'RESETDONE');
+  assert.equal(retriedExecution.data.resetRecord.status, 'COMPLETE');
+});
 
 test('AC-16d: in-flight runner and assessment work must finish before purge', async () => {
-  const { createExecutionQueue } = await import('../../backend/executions.mjs');
+  const { createExecutionQueue } = await import('../backend/executions.mjs');
   let releaseRunner;
   const runnerGate = new Promise((resolve) => { releaseRunner = resolve; });
   let runnerStarted;
