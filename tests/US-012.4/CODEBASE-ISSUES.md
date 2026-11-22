@@ -1,14 +1,12 @@
 # Các vấn đề trong codebase — US-012.4
 
-## [Mức độ cao] Reset có thể báo lỗi dù term đã được đánh dấu hoàn tất
+## [Đã xử lý] Lỗi lưu ResetRecord khi hoàn tất reset
 
-**Vị trí:** `backend\codepulse.mjs`, đoạn xử lý thực thi reset, khoảng dòng 1230–1237.
+**Vị trí:** `backend\codepulse.mjs`, đoạn xử lý thực thi reset.
 
-Handler ghi bền vững trạng thái term thành `RESETDONE` trước khi ghi thêm `ResetRecord` trạng thái `COMPLETE`. Nếu thao tác ghi file reset record thất bại, request trả về lỗi nhưng term vẫn ở trạng thái `RESETDONE`; đồng thời không có record `INCOMPLETE` vì bước lưu này nằm ngoài phần xử lý lỗi purge. Điều này vi phạm AC-16e: không được xác nhận hoàn tất nếu audit record chưa được lưu thành công, và lỗi phải được đánh dấu là chưa hoàn tất.
+Handler chỉ chuyển term sang `RESETDONE` sau khi lưu bền vững `ResetRecord` trạng thái `COMPLETE`. Nếu lưu record hoàn tất thất bại, handler cố lưu record `INCOMPLETE` kèm lỗi, trả về `TERM_RESET_INCOMPLETE` và giữ term ở trạng thái `RESETTING`, để có thể thử lại. Nếu lần ghi record lỗi cũng thất bại, lỗi đó được ghi log; term vẫn không được xác nhận hoàn tất.
 
-**Đề xuất xử lý:** Đảm bảo việc hoàn tất reset và lưu audit record có thể phục hồi như một giao dịch. Không chuyển sang `RESETDONE` nếu record `COMPLETE` chưa được lưu bền vững; khi có lỗi, giữ trạng thái có thể thử lại/chưa hoàn tất và ghi nhận lỗi nếu có thể.
-
-**Kiểm thử hồi quy:** Test cho nhánh lỗi tương ứng hiện được đánh dấu `todo` trong `semester-reset.spec.ts`; cần bật test sau khi sửa luồng xử lý.
+**Kiểm thử hồi quy:** Test AC-16e trong `semester-reset.spec.ts` mô phỏng lỗi ghi `COMPLETE`, xác nhận term giữ trạng thái `RESETTING`, record `INCOMPLETE` có thông tin lỗi được lưu, rồi xác nhận lần thử lại hoàn tất thành công.
 
 ## Ghi chú về phạm vi
 
