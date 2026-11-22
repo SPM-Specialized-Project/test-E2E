@@ -30,8 +30,9 @@ npx playwright install chromium
 npm test
 ```
 
-US-006 is temporarily excluded by the root config. Set `RUN_US006=true` to
-include it again. The default suite contains 27 tests.
+The browser suite includes US-006, which exercises unfinished autosave,
+recovery, snapshot, and conflict behavior and is expected to report failures
+until those product behaviors are implemented.
 
 The password-log check runs a separate copy of the application backend with
 a temporary data directory and an automatically assigned port. Set
@@ -61,17 +62,40 @@ setup validates the classroom state and reports an actionable error if it
 is not `ACTIVE`. Remote tests run with one worker to avoid overlapping
 membership and LAB mutations.
 
+## Debian runner setup
+
+The dispatched full E2E workflow runs on a self-hosted Debian 13 runner registered
+to this repository with the labels self-hosted, Linux, X64, and debian-13. The runner
+must be online before a dispatch can start. Use a dedicated staging host: remote
+fixtures create and update LABs, submissions, memberships, and other test records.
+
+Install Playwright's Linux browser dependencies once, as an administrator, from a
+clone of this repository:
+
+~~~bash
+npm ci
+sudo ./node_modules/.bin/playwright install-deps chromium
+~~~
+
+Each workflow run installs the Chromium browser into the runner user's cache. The
+workflow requires Node.js 24 and checks that the runner reports Debian 13.
+
 ## CI contract
 
-The `SPM-frontend` repository sends a `repository_dispatch` event containing
-the exact application commit and staging URL to test. This repository checks
-out the E2E suite and checks out that application commit into `spm/`, then
-runs against the supplied host on the `TUNGQUAN` Windows self-hosted runner
-with the default `self-hosted`, `Windows`, and `X64` labels. This staging
-workflow enables remote writes for fixture preparation and the mutation
-tests. Manual dispatch accepts an `app_ref` alongside the staging URL; it
-defaults to `staging`.
+Pull requests run a hosted validation job that checks the portable staging script,
+copies each native test fixture into a temporary directory, and lists the Playwright
+tests. They do not write to staging.
 
-The caller workflow polls this run and exposes the result as the
-`E2E (test-E2E runner)` required status check on the `staging -> main` pull
-request.
+The SPM-frontend repository sends a repository_dispatch event containing the exact
+application commit and staging URL to test. This repository checks out that E2E
+revision and the application commit into spm/, then runs the browser, frontend
+Vitest, backend Node, and backend Vitest suites on the Debian 13 runner. Each group
+is allowed to finish; the summary step fails the job if any group fails. Native test
+specs are copied into the checked-out SPM source tree so relative imports resolve.
+Manual dispatch accepts an app_ref and staging URL.
+
+The caller stores E2E_DISPATCH_TOKEN in SPM-frontend. It needs permission to dispatch
+this repository and read its Actions runs. An HTTP 401 means the caller's stored
+token must be replaced there; this repository workflow cannot repair that secret.
+The caller polls the dispatched run and exposes its result as the
+E2E (test-E2E runner) status check on the staging to main pull request.
