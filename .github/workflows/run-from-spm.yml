@@ -3,6 +3,9 @@ name: Run SPM E2E
 run-name: SPM E2E ${{ github.event.client_payload.correlation_id || 'manual' }}
 
 on:
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       base_url:
@@ -26,9 +29,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  pull-request-quality:
+    name: Pull request validation
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install E2E dependencies
+        run: npm ci
+
+      - name: Check Linux test staging script
+        run: node --check scripts/stage-native-tests.mjs
+
+      - name: Validate native test staging
+        run: |
+          set -euo pipefail
+          SPM_E2E_APP_ROOT="$RUNNER_TEMP/spm-native-test-target" node scripts/stage-native-tests.mjs
+
+      - name: Discover Playwright tests
+        run: npm test -- --list
+
   e2e:
+    if: github.event_name != 'pull_request'
     name: Full E2E and Unit Tests
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-hosted, linux, x64, debian-13]
     timeout-minutes: 30
     env:
       CI: true
@@ -53,6 +87,20 @@ jobs:
         with:
           node-version: 24
 
+      - name: Verify Debian 13 runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          if [[ "$ID" != 'debian' || "$VERSION_ID" != '13' ]]; then
+            echo "::error::Expected Debian 13, found $PRETTY_NAME."
+            exit 1
+          fi
+          node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
+          if (( node_major < 24 )); then
+            echo "::error::Expected Node.js 24 or newer, found $(node --version)."
+            exit 1
+          fi
       - name: Install E2E dependencies and browser
         run: |
           npm ci
@@ -62,34 +110,26 @@ jobs:
         run: npm ci --prefix spm/frontend
 
       - name: Stage Node and Vitest suites
-        shell: powershell
-        run: .\scripts\stage-native-tests.ps1
+        shell: bash
+        run: node scripts/stage-native-tests.mjs
 
       - name: Verify target staging URL
-        shell: powershell
+        shell: bash
         env:
           TARGET_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.base_url || github.event.client_payload.base_url }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:TARGET_BASE_URL)) {
-            throw 'A staging URL is required.'
-          }
-          $baseUrl = $env:TARGET_BASE_URL.TrimEnd('/')
+          set -euo pipefail
+          if [[ -z "${TARGET_BASE_URL:-}" ]]; then
+            echo '::error::A staging URL is required.'
+            exit 1
+          fi
+          base_url="${TARGET_BASE_URL%/}"
 
-          foreach ($route in @('/api/health', '/login')) {
-            & curl.exe --fail --silent --show-error --retry 10 --retry-delay 2 --connect-timeout 10 --max-time 30 "$baseUrl$route" | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-              throw "Staging health check failed for $route."
-            }
-          }
+          for route in /api/health /login; do
+            curl --fail --silent --show-error --retry 10 --retry-delay 2 --connect-timeout 10 --max-time 30 "$base_url$route" >/dev/null
+          done
 
-          $environment = "BASE_URL=$baseUrl`nAPI_BASE_URL=$baseUrl`n"
-          [System.IO.File]::AppendAllText(
-            $env:GITHUB_ENV,
-            $environment,
-            [System.Text.UTF8Encoding]::new($false)
-          )
-
+          printf 'BASE_URL=%s\nAPI_BASE_URL=%s\n' "$base_url" "$base_url" >> "$GITHUB_ENV"
       - name: Run Playwright E2E
         id: playwright
         continue-on-error: true
@@ -99,7 +139,7 @@ jobs:
         id: frontend_vitest
         continue-on-error: true
         working-directory: spm/frontend
-        run: .\node_modules\.bin\vitest.cmd run tests\run-code-sandbox tests\US-007.2
+        run: npx vitest run tests/run-code-sandbox tests/US-007.2
 
       - name: Run backend Node test suites
         id: backend_node
@@ -111,30 +151,26 @@ jobs:
         id: backend_vitest
         continue-on-error: true
         working-directory: spm
-        run: .\frontend\node_modules\.bin\vitest.cmd run --root . tests\US-012.2-admin-operations\admin-operations.spec.ts tests\us-012-3\retention-backup.spec.ts
+        run: ./frontend/node_modules/.bin/vitest run --root . tests/US-012.2-admin-operations/admin-operations.spec.ts tests/us-012-3/retention-backup.spec.ts
 
       - name: Summarize full test suite result
         if: always()
-        shell: powershell
+        shell: bash
         env:
           PLAYWRIGHT_OUTCOME: ${{ steps.playwright.outcome }}
           FRONTEND_VITEST_OUTCOME: ${{ steps.frontend_vitest.outcome }}
           BACKEND_NODE_OUTCOME: ${{ steps.backend_node.outcome }}
           BACKEND_VITEST_OUTCOME: ${{ steps.backend_vitest.outcome }}
         run: |
-          $failed = @()
-          foreach ($suite in @(
-            @{ Name = 'Playwright E2E'; Outcome = $env:PLAYWRIGHT_OUTCOME },
-            @{ Name = 'Frontend Vitest'; Outcome = $env:FRONTEND_VITEST_OUTCOME },
-            @{ Name = 'Backend Node'; Outcome = $env:BACKEND_NODE_OUTCOME },
-            @{ Name = 'Backend Vitest'; Outcome = $env:BACKEND_VITEST_OUTCOME }
-          )) {
-            if ($suite.Outcome -ne 'success') { $failed += "$($suite.Name): $($suite.Outcome)" }
-          }
-          if ($failed.Count -gt 0) {
-            throw "One or more full-suite groups failed: $($failed -join '; ')"
-          }
-
+          failures=''
+          if [[ "$PLAYWRIGHT_OUTCOME" != 'success' ]]; then failures="$failures Playwright E2E: $PLAYWRIGHT_OUTCOME;"; fi
+          if [[ "$FRONTEND_VITEST_OUTCOME" != 'success' ]]; then failures="$failures Frontend Vitest: $FRONTEND_VITEST_OUTCOME;"; fi
+          if [[ "$BACKEND_NODE_OUTCOME" != 'success' ]]; then failures="$failures Backend Node: $BACKEND_NODE_OUTCOME;"; fi
+          if [[ "$BACKEND_VITEST_OUTCOME" != 'success' ]]; then failures="$failures Backend Vitest: $BACKEND_VITEST_OUTCOME;"; fi
+          if [[ -n "$failures" ]]; then
+            echo "::error::One or more full-suite groups failed:$failures"
+            exit 1
+          fi
       - name: Upload E2E artifacts
         if: always()
         uses: actions/upload-artifact@v7
